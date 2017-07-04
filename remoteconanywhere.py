@@ -25,7 +25,13 @@ import logging
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
 
-###################################### CREDENTIALS
+# ##################################### CREDENTIALS
+
+#         CCC RRR  EEEE DDD  EEEE N   N TTTTT III  AA  L    SSS                                                             
+#        C    R  R E    D  D E    NN  N   T    I  A  A L   S                                                                    
+#        C    RRR  EEE  D  D EEE  N N N   T    I  AAAA L    SSS                                                                           
+#        C    R R  E    D  D E    N  NN   T    I  A  A L       S                                                                 
+#         CCC R  R EEEE DDD  EEEE N   N   T   III A  A LLLL SSS                                                                           
 
 class CredentialManager:
     """Base class for a PasswordManager, that always asks"""
@@ -86,7 +92,7 @@ class MyCredManager(CredentialManager):
         with open(self.file, "r") as fin:
             try:
                 self.hosts = json.load(fin)
-            except json.JSONDecodeError as e:
+            except ValueError as e:
                 LOGGER.warn("Error loading file %s: %r", self.file, e)
         self.writeback = writeback
 
@@ -143,7 +149,7 @@ CREDENTIAL_MANAGERS = {
     "ASK": CredentialManager
 }
 
-########################################## Command/responses
+# ######################################### Command/responses
 
 class Command:
     def __init__(self, msg, data=None):
@@ -159,7 +165,14 @@ class Response:
     def __repr__(self):
         return type(self).__name__ + repr(self.__dict__)
 
-######################################## Clients
+# ####################################### Base classes client / server
+
+class ServerBase:
+    def __init__(self, proxyaddr, credmanager, id):
+        LOGGER.warn("Creating %s to %s with id=%s", type(self).__name__, proxyaddr, id)
+        self.proxyaddr = proxyaddr
+        self.credmanager = credmanager
+        self.id = id
 
 class ClientBase:
     """Base class for a client"""
@@ -187,7 +200,7 @@ class ClientBase:
         @return: the returned response object"""
         raise NotImplementedError
 
-######################################### Responders
+# ######################################## Responders
 
 class Responder:
     """An executor of commands"""
@@ -288,16 +301,15 @@ class BashResponder(Responder):
     def close(self):
         self.p.kill()
 
-##################################### Servers
 
-class ServerBase:
-    def __init__(self, proxyaddr, credmanager, id):
-        LOGGER.warn("Creating %s to %s with id=%s", type(self).__name__, proxyaddr, id)
-        self.proxyaddr = proxyaddr
-        self.credmanager = credmanager
-        self.id = id
 
-####################################### IMAP Protocol
+# ###################################### IMAP Protocol
+
+#       III M   M  AA  PPP 
+#        I  MM MM A  A P  P
+#        I  M M M AAAA PPP 
+#        I  M   M A  A P   
+#       III M   M A  A P   
 
 class ImapCommon:
     EXPECTED_SUBJECT = "RemoteConnection"
@@ -318,6 +330,8 @@ class ImapCommon:
     LAST_LAST = 'last'
     LAST_NOTLAST = '-'
     
+    SESSION_NEW = '-'
+    
     SEARCH_INTERVAL = 1
 
     def connect(self, hostname, credmanager, login=None, password=None):
@@ -325,6 +339,7 @@ class ImapCommon:
         self.credmanager = credmanager
         self.conn = imaplib.IMAP4(hostname)
         self.conn.starttls()
+        self.connlock = threading.RLock()
         if login is None and password is None:
             login, password = self.credmanager.getcredentials(hostname, login=login)
         while True:
@@ -351,14 +366,16 @@ class ImapCommon:
     def deleteemail(self, uid):
         """Delete an used e-mail from the server"""
         LOGGER.debug("Delete e-mail uid %s", uid)
-        typ, resp = self.conn.uid('store', uid, r'+FLAGS.SILENT \Deleted')
-        self.conn.expunge()
+        with self.connlock:
+            typ, resp = self.conn.uid('store', uid, r'+FLAGS.SILENT \Deleted')
+            self.conn.expunge()
 
     def mime2email(self, mime):
         """Write an e-mail to the IMAP server."""
         data = mime.as_bytes()
         LOGGER.debug("Writing e-mail with subject %s size %s", mime['Subject'], len(data))
-        self.conn.append(None, None, None, data)
+        with self.connlock:
+            self.conn.append(None, None, None, data)
     
     @classmethod
     def parsesubject(cls, data):
@@ -394,13 +411,15 @@ class ImapCommon:
         LOGGER.debug("Searching for emails that contains %s", othersearch)
         while not found:
             # searching e-mails
-            typ, uids = self.conn.uid('search', *othersearch)
+            with self.connlock:
+                typ, uids = self.conn.uid('search', *othersearch)
             if not uids[0]:
                 time.sleep(self.SEARCH_INTERVAL)
                 continue
             # fetching them all
             LOGGER.info("Emails corresponding to %s found: %s", othersearch, uids[0].decode())
-            typ, responses = self.conn.uid('fetch', ",".join(uids[0].decode().split()), "(UID RFC822.HEADER)")
+            with self.connlock:
+                typ, responses = self.conn.uid('fetch', ",".join(uids[0].decode().split()), "(UID RFC822.HEADER)")
             LOGGER.debug("Fetched headers %s: %r", typ, responses)
             for response in responses:
                 if type(response) is not tuple:
@@ -477,7 +496,7 @@ class ImapServer(ServerBase, ImapCommon):
         nreq = parsedsubject.group('nreq')
         nmail = parsedsubject.group('nmail')
         last = parsedsubject.group('last')
-        if session == '-':
+        if session == self.SESSION_NEW:
             # new session
             return True
         if session in self.sessions:
@@ -492,7 +511,7 @@ class ImapServer(ServerBase, ImapCommon):
         return False
 
     def search(self):
-        msg = waitforemail(sid=self.id, globalcheck=self.accept)
+        msg = self.waitforemail(sid=self.id, globalcheck=self.accept)
         parsedsubject = self.parsesubject(msg)
         orig = parsedsubject.group('orig')
         session = parsedsubject.group('session')
@@ -524,8 +543,8 @@ class ImapServer(ServerBase, ImapCommon):
             elif not sessionobj.last and nreq == str(sessionobj.nreq) and nmail == str(sessionobj.nmail+1):
                 # previous request was not finished and we have a next email
                 sessionobj.request.append(msg)
-                sessionobj.nreq = str(nreq)
-                sessionobj.nmail = str(nmail)
+                sessionobj.nreq = int(nreq)
+                sessionobj.nmail = int(nmail)
                 last = sessionobj.last = last == self.LAST_LAST
                 if islast:
                     return self.requestcomplete(sessionobj, *sessionobj.request)
@@ -538,7 +557,7 @@ class ImapServer(ServerBase, ImapCommon):
         returned = MIMEText(text)
         sessionobj.nreqserver += 1
         returned['Subject'] = self.SUBJECT_PATTERN.format(sid=sessionobj.otherid,
-                                     orig=server.id, session=sessionobj.session,
+                                     orig=self.id, session=sessionobj.session,
                                      nreq=sessionobj.nreqserver, nmail=0, last=self.LAST_LAST)
         # send response to server
         self.mime2email(returned)
@@ -597,14 +616,20 @@ class ImapClient(ClientBase, ImapCommon):
             message = MIMEText(msg)
             message['Subject'] = self.EXPECTED_SUBJECT
 
-################################################ Socket server/client
+# ############################################## Socket server/client
+#
+#       III M   M  AA  PPP    SSS   OO   CCC K  K EEEE TTTTT      
+#        I  MM MM A  A P  P  S     O  O C    K K  E      T       
+#        I  M M M AAAA PPP    SSS  O  O C    KK   EEE    T                
+#        I  M   M A  A P         S O  O C    K K  E      T            
+#       III M   M A  A P      SSS   OO   CCC K  K EEEE   T                     
 
 import socket
 
 class ImapSocketCommon(ImapCommon):
     TEXT_EXPOSE_SOCKET = "Please expose port {port} on machine {host}"
-    TEXT_STOP = "Stop"
-    RX_EXPOSE_SOCKET = re.compile(re.sub(r"{(\w+)\}", r"(?P<\1>[a-zA-Z0-9.-]+)", TEXT_EXPOSE_SOCKET))
+    TEXT_STOP = "Please stop communication"
+    RX_EXPOSE_SOCKET = re.compile(re.sub(r"{(\w+)\}", r"(?P<\1>[a-zA-Z0-9_.-]+)", TEXT_EXPOSE_SOCKET.replace(' ', r'\s+')))
     
     MAX_SIZE_DATA = 1000*1000
     
@@ -623,6 +648,56 @@ class ImapSocketCommon(ImapCommon):
             msg['Subject'] = self.SUBJECT_PATTERN.format(sid=destinationid, orig=self.id, session=session,
                             nreq=nreq, nmail=nmail, last=ImapCommon.LAST_LAST if i == nbchunks-1 else ImapCommon.LAST_NOTLAST)
             self.mime2email(msg)
+     
+    
+    def listentosocketandsendmail(self, conn, destinationid, session, nreqstart=0):
+        #key = "{}:{}".format(serverid, session)
+        nreq = nreqstart
+        conn.setblocking(False)
+        start = time.time()
+        tosend = []
+        def emptytosend():
+            nonlocal nreq
+            nreq += 1
+            self.senddatatootherend(session, b''.join(tosend), nreq, destinationid=destinationid)
+            tosend[:] = []
+        while True:
+            # receive some data
+            try:
+                data = conn.recv(4096)
+            except BlockingIOError:
+                # no data received, wait a little
+                if tosend:
+                    emptytosend()
+                time.sleep(500)
+                start = time.time()
+                continue
+            except (ConnectionResetError, OSError):
+                # end of communication
+                data = b''
+
+            if data is not None and len(data) == 0:
+                # communication terminated
+                if tosend:
+                    # send remaining data
+                    emptytosend()
+                # send indication to stop
+                LOGGER.info("Session %s: End of communication")
+                msg = MIMEText(self.TEXT_STOP)
+                nreq += 1
+                msg['Subject'] = self.SUBJECT_PATTERN.format(sid=destinationid, orig=self.id, session=session,
+                            nreq=nreq, nmail=0, last=ImapCommon.LAST_LAST)
+                self.mime2email(msg)
+                # close connection
+                conn.close()
+                # stop thread
+                return
+            # append some data
+            tosend.append(data)
+            if time.time() - start > 1:
+                # time to send a new message
+                emptytosend()
+                start = time.time()
 
 class ImapSocketServer(ImapServer, ImapSocketCommon):
     """Server that forwards a port."""
@@ -631,43 +706,28 @@ class ImapSocketServer(ImapServer, ImapSocketCommon):
 
     def newsession(self, sessionobj, msg):
         # store info about the socket to display
-        m = RX_EXPOSE_SOCKET.search(msg.get_payload())
+        m = self.RX_EXPOSE_SOCKET.search(msg.get_payload())
         if m is None:
             return super().newsession(sessionobj, msg, 'Bad request')
         # open socket
         sessionobj.socketlocalport = m.group('host'), int(m.group('port'))
+        LOGGER.info("Session %s: New connection to %s", sessionobj.session, sessionobj.socketlocalport)
         sessionobj.socket = socket.create_connection(sessionobj.socketlocalport)
-        self.listeningsocketthread = threading.Thread(target=self.listeningtosocket, args=(sessionobj,))
+        sessionobj.listeningsocketthread = threading.Thread(target=self.listeningtosocket, args=(sessionobj,))
+        sessionobj.listeningsocketthread.start()
         # answer back
         return super().newsession(sessionobj, msg)
 
     def listeningtosocket(self, sessionobj):
         """Listener on socket, must be run in separate thread."""
-        sessionobj.socket.setblocking(False)
-        start = time.time()
-        tosend = []
-        def emptytosend():
-            sessionobj.nreqserver += 1
-            self.senddatatootherend(sessionobj.session, b''.join(tosend), sessionobj.nreqserver, destinationid=sessionobj.otherid)
-            tosend[:] = []
-        while True:
-            data = sessionobj.recv(4096)
-            if not data:
-                if tosend:
-                    emptytosend()
-                time.sleep(500)
-                start = time.time()
-                continue
-            tosend.append(data)
-            if time.time() - start > 1:
-                emptytosend()
-                start = time.time()
+        return self.listentosocketandsendmail(sessionobj.socket, sessionobj.otherid, sessionobj.session, sessionobj.nreqserver)
 
     def requestcomplete(self, sessionobj, *msgs):
         if any(msg.is_multipart() for msg in msgs):
             LOGGER.error("Received an unexpected multipart message.")
         elif len(msgs) == 1 and type(msgs[0].get_payload()) == str and self.TEXT_STOP in msgs[0].get_payload():
             # stop connection
+            LOGGER.info("Session %s: Terminating", sessionobj.session)
             sessionobj.socket.close()
             msg = MIMEText("Socket closed.")
             sessionobj.nreqserver += 1
@@ -677,28 +737,120 @@ class ImapSocketServer(ImapServer, ImapSocketCommon):
         else:
             # send message
             zdata = b''.join(msg.get_payload(decode=True) for msg in msgs)
-            data = zlib.decompress(data)
-            socket.sendall(data)
+            data = zlib.decompress(zdata)
+            LOGGER.info("Session %s: Sending data %s bytes", sessionobj.session, len(data))
+            sessionobj.socket.sendall(data)
 
+class ImapSocketClientSession(ServerSession):
+    def __init__(self, serverid, socketclient, address):
+        self.otherid = serverid
+        self.socket = socketclient
+        self.address = address
+        self.request = []
 
 class ImapSocketClient(ClientBase, ImapSocketCommon):
     def __init__(self, hostname, credmanager, login=None, password=None, id=None):
         super().__init__(hostname, credmanager, id)
         self.connect(hostname, credmanager, login, password)
-        self.sessions = {} # sessionid => socket
+        self.sessions = {} # serverid+':'+sessionid => ImapSocketClientSession
+        self.waitingthread = threading.Thread(target=self.loop)
+        self.waitingthread.start()
     
     def loop(self):
+        def checkifmessageforme(msg, m):
+            key = "{}:{}".format(m.group('orig'), m.group('session'))
+            if key not in self.sessions:
+                return False
+            sessionobj = self.sessions[key]
+            nreq = int(m.group('nreq'))
+            nmail = int(m.group('nmail'))
+            if sessionobj.last and nmail == 0 and nreq == sessionobj.nreq + 1: 
+                # last message is complete, waiting for nmail = 0 nreq = sessionobj.nreq+1
+                return True
+            if not sessionobj.last and nreq == sessionobj.nreq and nmail == sessionobj.nmail + 1:
+                # next email for request
+                return True
+            return False
+                
+        # loop that dispatches messages to the sockets
         while True:
-            # 
-            # # #### FIXME !!!
-            # 
-            self.waitforemail(sid=None, orig=None, session=None, nreq=None, nmail=None, last=None,
-                     globalcheck=None)
+            msgforme = self.waitforemail(sid=self.id, orig=None, session=None, nreq=None, nmail=None, last=None,
+                     globalcheck=checkifmessageforme)
+            m = self.parsesubject(msgforme)
+            key = "{}:{}".format(m.group('orig'), m.group('session'))
+            sessionobj = self.sessions[key]
+            nreq = int(m.group('nreq'))
+            nmail = int(m.group('nmail'))
+            islast = m.group('last') == self.LAST_LAST
+            if sessionobj.last and nmail == 0 and nreq == sessionobj.nreq + 1:
+                # new request !
+                sessionobj.nreq = nreq
+                sessionobj.nmail = nmail
+                sessionobj.last = islast
+                sessionobj.request = [msgforme]
+                LOGGER.debug("Session %s: New request %s (nmail=%s last=%s)", key, nreq, nmail, islast)
+            if not sessionobj.last and nreq == sessionobj.nreq and nmail == sessionobj.nmail + 1:
+                # next mail in request
+                sessionobj.nmail = nmail
+                sessionobj.last = islast
+                sessionobj.request.append(msgforme)
+                LOGGER.debug("Session %s: Current request %s next email %s (last=%s)", key, nreq, nmail, islast)
+            if islast:
+                # handle last message
+                if len(sessionobj.request) == 1 and self.TEXT_STOP in sessionobj.request[0].get_payload():
+                    LOGGER.info("Session %s: Terminating", key)
+                    sessionobj.socket.close()
+                    del self.sessions[key]
+                else:
+                    # send message
+                    zdata = b''.join(msg.get_payload(decode=True) for msg in sessionobj.request)
+                    data = zlib.decompress(zdata)
+                    LOGGER.info("Session %s: Sending data %s bytes", key, len(data))
+                    sessionobj.socket.sendall(data)
+            
+            
     
-    def openconnection(self, localport, distanthost, distantport):
-        self.socket = socket.socket()
-        socket.bind(('', int(localport)))
-        socket.listen(5)
+    def openconnection(self, serverid, localport, distanthost, distantport):
+        """Open a binded socket locally, and when a connection arrives, starts a session."""
+        sock = socket.socket()
+        sock.bind(('', int(localport)))
+        sock.listen(5)
+        LOGGER.info("Listening for incoming connections on port %s (for %s:%s on server %s)", localport, distanthost, distantport, serverid)
+        t = threading.Thread(target=self.listentoserversocket, args=(localport, sock, serverid, distanthost, distantport))
+        t.start()
+    
+    def listentoserversocket(self, localport, sock, serverid, distanthost, distantport):
+        """Thread to listen to the server socket on the local port."""
+        while True:
+            # wait for a connection
+            conn, adress = self.socket.accept()
+            LOGGER.info("Incoming connection on port %s (from %s) (for %s:%s on server %s)", localport, adress, distanthost, distantport, serverid)
+            # send e-mail message for new session
+            msg = MIMEText(self.TEXT_EXPOSE_SOCKET.format(port=distantport, host=distanthost))
+            msg['Subject'] = self.SUBJECT_PATTERN.format(sid=serverid, orig=self.id, session=self.SESSION_NEW,
+                            nreq=0, nmail=0, last=ImapCommon.LAST_LAST)
+            keyformater = serverid + ":{}"
+            with self.connlock:
+                # lock incoming messages before we get the new session
+                self.mime2email(msg)
+                # wait for session id
+                response = self.waitforemail(sid=self.id, orig=serverid, session=lambda s:keyformater.format(s) not in self.sessions)
+            # get and store session
+            parsedsubject = self.parsesubject(response)
+            session = parsedsubject.group('session')
+            nreq = parsedsubject.group('nreq')
+            LOGGER.info("%s is connected using session %s", adress, session)
+            if nreq != '0':
+                # nreq must be '0'
+                LOGGER.warn("NREQ was not 0: %s", nreq)
+            sessionobj = self.sessions[keyformater.format(session)] = ImapSocketClientSession(serverid, conn, adress)
+            # start thread listening to socket
+            t = sessionobj.listeningthread = threading.Thread(target=self.listentoclientsocket, args=(conn, serverid, session))
+            t.start()
+    
+    def listentoclientsocket(self, conn, serverid, session):
+        """Thread to listen to an incoming client socket."""
+        return self.listentosocketandsendmail(conn, serverid, session)
         
         
         
@@ -708,7 +860,14 @@ PROTOCOLS = {
     "IMAP": (ImapClient, ImapBashServer),
 }
 
-############################################ Main methods
+# ########################################### Main methods
+#
+#                      M   M  AAA  III N   N                                            
+#                      MM MM A   A  I  NN  N                                          
+#                      M M M AAAAA  I  N N N                                             
+#                      M   M A   A  I  N  NN                                               
+#                      M   M A   A III N   N                                                       
+#                                                                                               
 
 COMMON_ARGUMENTS = argparse.ArgumentParser(description="Remote connection server", add_help=False)
 COMMON_ARGUMENTS.add_argument("--protocol", default="IMAP", help="The protocol to use (one of %s)" % ", ".join(PROTOCOLS.keys()))
@@ -720,6 +879,46 @@ COMMON_ARGUMENTS.add_argument("--credmode", default="DEFAULT", help="The credent
 COMMON_ARGUMENTS.add_argument("--credfile", help="The credential file (default for the one of credmode mode)")
 COMMON_ARGUMENTS.add_argument("--protectcredfile", default=False, const=True, action="store_const", help="Indicates if the credential file must be protected.")
 COMMON_ARGUMENTS.add_argument("--id", default=hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)], help="Identifier of the instance")
+
+def mainSocket(*args):
+    logging.basicConfig(level=logging.DEBUG)
+    parser = argparse.ArgumentParser(description="Test imap connection", parents=[COMMON_ARGUMENTS], prog=args[0]+" imaptest")
+    parser.add_argument("--mode", "-m", help="The mode of socket (client, server)", required=True)
+    def parsetunnel(s, rx=re.compile('(?P<localport>\d+):(?P<distanthost>[a-zA-Z0-9._-]+):(?P<distantport>\d+)')):
+        m = rx.match(s)
+        if not m:
+            raise argparse.ArgumentTypeError
+        return m
+    parser.add_argument("--tunnel", "-L", help="Start the tunnel directly (port-local:HOSTNAME:port-distant)", type=parsetunnel)
+    parser.add_argument("--serverid", "-S", help="Default server id")
+    options = parser.parse_args(args[1:])
+    credmanager = CREDENTIAL_MANAGERS[options.credmode](options.credfile, not options.protectcredfile)
+    
+    if options.mode == "client":
+        # client
+        client = ImapSocketClient(options.host, credmanager, login=options.user, password=options.password, id=options.id)
+        if options.tunnel:
+            client.openconnection(options.serverid, int(options.tunnel.group('localport')), options.tunnel.group('distanthost'), options.tunnel.group('distantport'))
+        openconnectionrx = re.compile(r"(?i)open\s+(?P<serverid>[a-zA-Z0-9._-]+)(?P<localport>\d+)\s+(?P<distanthost>[a-zA-Z0-9._-]+)\s+(?P<distantport>\d+)")
+        while True:
+            command = input("Command: ")
+            m = openconnectionrx.match(command)
+            if m:
+                serverid = m.group('serverid')
+                if len(serverid) == 1 and options.serverid:
+                    serverid = options.serverid
+                client.openconnection(serverid, int(m.group('localport')), m.group('distanthost'), m.group('distantport'))
+                continue
+            if command:
+                # not recognized command
+                print("Available commands:")
+                print("    OPEN <serverid> <localport> <distanthost> <distantport>")
+    else:
+        # server
+        server = ImapSocketServer(options.host, credmanager, login=options.user, password=options.password, id=options.id)
+        LOGGER.info("ImapSocketServer %s started on %s", options.id, options.host)
+    
+    
 
 def mainImaptest(*args):
     logging.basicConfig(level=logging.DEBUG)
