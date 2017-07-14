@@ -344,7 +344,7 @@ class CommunicationChannel:
     def checkfordata(self, globalcheck=None, **kwargsexpected):
         """Wait for data that corresponds to the provided checks.
         May store the uids => kwargs in a cache (must be emptied in deletedata)
-        @return: False if there is no data, otherwise the list of corresponding uids"""
+        @return: the list of corresponding uids (may be empty)"""
         raise NotImplementedError
     
     def retrievedata(self, uid, deleteafteruse=True):
@@ -382,6 +382,7 @@ class FolderCommunicationChannel(CommunicationChannel):
         """Send the data to the provided arguments
         @return: if symmetric, return the uid of the message"""
         filename = self.FILENAME.format(**kwargs)
+        LOGGER.debug("Writing file %s", filename)
         with open(os.path.join(self.folder, filename), 'wb') as fout:
             pickle.dump(data, fout)
         return filename
@@ -389,7 +390,7 @@ class FolderCommunicationChannel(CommunicationChannel):
     def checkfordata(self, globalcheck=None, **kwargsexpected):
         """Wait for data that corresponds to the provided checks.
         May store the uids => kwargs in a cache (must be emptied in deletedata)
-        @return: False if there is no data, otherwise the list of corresponding uids"""
+        @return: the list of corresponding uids (may be empty)"""
         foundfiles = []
         for fil in os.listdir(self.folder):
             m = self.FILENAME_RX.match(fil)
@@ -397,12 +398,14 @@ class FolderCommunicationChannel(CommunicationChannel):
             kwargs = m.groupdict()
             if self.checkkwargs(kwargs, globalcheck, **kwargsexpected):
                 foundfiles.append(fil)
-        return foundfiles or False
+        LOGGER.debug("%s file(s) match", len(foundfiles))
+        return foundfiles
     
     def retrievedata(self, uid, deleteafteruse=True):
         """Retrieve some data.
         @param uid: the uid as returned by checkfordata
         @return a tuple (kwargs, data)"""
+        LOGGER.debug("Retrieving file %s", uid)
         kwargs = self.FILENAME_RX.match(uid).groupdict()
         with open(os.path.join(self.folder, uid), 'rb') as fin:
             data = pickle.load(fin)
@@ -413,18 +416,21 @@ class FolderCommunicationChannel(CommunicationChannel):
     def deletedata(self, uid):
         """Delete some data given the uid.
         @param uid: the uid as returned by checkfordata"""
+        LOGGER.debug("Removing file %s", uid)
         os.remove(os.path.join(self.folder, uid))
 
 def testFolderCommunicationChannel(options=None):
+    """Tests the communication channel by file."""
     os.makedirs("tempfolder", exist_ok=True)
     tempfolder = os.path.abspath("tempfolder")
     channel = FolderCommunicationChannel(tempfolder)
     sid = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)]
     orig = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)]
-    nreq = "test"
+    nreq = "0"
     nmail = "0"
     session = "164"
     last = FolderCommunicationChannel.LAST_LAST
+    # sending bytes
     data = uuid.uuid4().bytes
     uid = channel.senddata(**locals())
     l = channel.checkfordata(sid=sid, orig=orig)
@@ -433,6 +439,20 @@ def testFolderCommunicationChannel(options=None):
     for k in channel.METADATA:
         assert kwargs[k] == locals()[k], "Bad key value returned for k={}: {!r} != {!r}".format(k, locals()[k], kwargs[k])
     assert data2 == data, "Bad data returned: {!r} != {!r}".format(data, data2)
+    channel.deletedata(uid)
+    # sending string
+    data = uuid.uuid4().hex
+    assert type(data) == str, "Bad data type: %r" % data
+    nreq = 1
+    uid = channel.senddata(**locals())
+    l = channel.checkfordata(sid=sid, orig=orig)
+    assert type(l) == list and l[0] == uid, "Not same file returned: {} != {}".format(uid, l)
+    kwargs, data2 = channel.retrievedata(uid, False)
+    for k in channel.METADATA:
+        assert kwargs[k] == str(locals()[k]), "Bad key value returned for k={}: {!r} != {!r}".format(k, locals()[k], kwargs[k])
+    assert data2 == data, "Bad data returned: {!r} != {!r}".format(data, data2)
+    assert type(data2) == str, "Bad data type returned: %r" % data
+    # cleaning
     shutil.rmtree(tempfolder, ignore_errors=True)
 
 class EmailCommunicationChannel(CommunicationChannel):
@@ -479,6 +499,7 @@ class EmailCommunicationChannel(CommunicationChannel):
         subject = self.SUBJECT_PATTERN.format(**kwargs)
         if isinstance(data, str) and len(data) < 1000:
             mime = MIMEText(data, "plain", "utf-8")
+            #mime[self.HEADER_PYTHON_TYPE] = "str"
         else:
             datatype = type(data).__name__
             if isinstance(data, str):
@@ -498,7 +519,7 @@ class EmailCommunicationChannel(CommunicationChannel):
         m = self.parsesubject(mime)
         kwargs = m.groupdict()
         if 'text' in mime[self.HEADER_CONTENT_TYPE]:
-            data = mime.get_payload(decode=True)
+            data = mime.get_payload(decode=True).decode('utf-8')
         else:
             data = mime.get_payload(decode=True)
             if mime.get(self.HEADER_PYTHON_TYPE, "bytes") == "str":
@@ -510,16 +531,6 @@ class EmailCommunicationChannel(CommunicationChannel):
         @param uid: the uid as returned by checkfordata"""
         return self.deleteemail(uid)
 
-    def email2mime(self, uid):
-        """Read an e-mail with its uid."""
-        raise NotImplementedError
-
-    def mime2email(self, mime):
-        """Send an e-mail."""
-        raise NotImplementedError
-    
-    def deleteemail(self, uid):
-        """Delete an used e-mail from the server"""
 
     @classmethod
     def parsesubject(cls, data):
@@ -538,11 +549,201 @@ class EmailCommunicationChannel(CommunicationChannel):
         toreturn = cls.SUBJECT_RX.match(subject)
         return toreturn
 
-class ImapCommunicationChannel(CommunicationChannel):
+class ImapCommunicationChannel(EmailCommunicationChannel):
     """Communication channel that uses only an imap server."""
     
     # flag to indicate that all methods are implemented
     USABLE = True
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cache = {}
+    
+    def connect(self):
+        """Establishes the connection."""
+        if self.connected:
+            return
+        clazz = imaplib.IMAP4
+        usetls = True
+        hostname = self.hostname
+        if hostname.endswith('ssl'):
+            clazz = imaplib.IMAP4_SSL
+            hostname = hostname[:-3]
+            usetls = False
+        hostname = hostname.strip(":")
+        connector = lambda: clazz(hostname)
+        if ":" in hostname:
+            hostname, port = hostname.split(':')
+            port = int(port)
+            LOGGER.debug("Connecting to %r on port %s using %s", hostname, port, clazz.__name__)
+            connector = lambda: clazz(hostname, port)
+        else:
+            LOGGER.debug("Connecting to %r using %s", hostname, clazz.__name__)
+        self.conn = connector()
+        self.imapcapabilities = self.conn.capability()[1][0].decode().upper().split()
+        LOGGER.info("Connected to %s with capabilities: %s", hostname, " ".join(self.imapcapabilities))
+        usetls = usetls and "STARTTLS" in self.imapcapabilities
+        if usetls:
+            self.conn.starttls()
+        self.connlock = threading.RLock()
+        login, password = self.login, self.password
+        if login is None and password is None:
+            login, password = self.credmanager.getcredentials(hostname, login=login)
+        while True:
+            try:
+                self.conn.login(login, password)
+                break
+            except self.conn.error as e:
+                print("Error returned from server:", repr(e))
+            login, password = self.credmanager.badcredentials(hostname, login=login)
+            # restart connection
+            self.conn.shutdown()
+            self.conn = connector()
+            if usetls:
+                self.conn.starttls()
+        LOGGER.debug("Connected to %s as %s", hostname, login)
+        self.headerfrom = self.headerto = self.login = login
+        self.conn.select()
+        self.connected = True
+    
+    def email2mime(self, uid):
+        """Read an e-mail with its uid."""
+        self.connect()
+        LOGGER.debug("Fetching e-mail uid %s", uid)
+        _typ, resp = self.conn.uid('fetch', uid, '(RFC822)')
+        message = self.PARSER.parsebytes(resp[0][1])
+        return message
+
+    APPENDUID_RX = re.compile(r"(?i)APPENDUID\s+(?P<uidstatus>\d+)\s+(?P<uid>\d+)")
+
+    def mime2email(self, mime):
+        """Send an e-mail."""
+        self.connect()
+        data = mime.as_bytes()
+        LOGGER.debug("Writing e-mail with subject %s size %s", mime['Subject'], len(data))
+        with self.connlock:
+            _typ, response = self.conn.append(None, None, None, data)
+        if "APPENDUID" in response[0].upper().decode():
+            m = self.APPENDUID_RX.search(response[0].decode())
+            if m:
+                return m.group("uid")
+    
+    def deleteemail(self, uid):
+        """Delete an used e-mail from the server"""
+        self.connect()
+        LOGGER.debug("Delete e-mail uid %s", uid)
+        with self.connlock:
+            _typ, _resp = self.conn.uid('store', uid, r'+FLAGS.SILENT \Deleted')
+            self.conn.expunge()
+        if uid in self.cache:
+            del self.cache[uid]
+    
+    def checkfordata(self, globalcheck=None, **kwargsexpected):
+        """Wait for data that corresponds to the provided checks.
+        May store the uids => kwargs in a cache (must be emptied in deletedata)
+        @return: the list of corresponding uids (may be empty)"""
+        
+        # finding in cache first, before interrogating server
+        toreturn = list(uid for uid, d in self.cache.items() if self.checkkwargs(d, globalcheck, **kwargsexpected))
+        if toreturn:
+            return toreturn
+        # finding in server
+        othersearch = ["HEADER", "Subject", self.EXPECTED_SUBJECT, "NOT DELETED"
+                       ]
+        for grp in self.SUBJECT_GROUPS:
+            value = kwargsexpected.get(grp)
+            if type(value) is str:
+                othersearch.append('HEADER')
+                othersearch.append('Subject')
+                othersearch.append(self.SEARCH_SUBJECT_PATTERN.format(group=grp, value=value))
+        LOGGER.debug("Searching for emails that contains %s", othersearch)
+        # searching e-mails
+        with self.connlock:
+            _typ, uids = self.conn.uid('search', *othersearch)
+        if not uids[0]:
+            LOGGER.info("Nothing found.")
+            return []
+        # fetching them all
+        LOGGER.info("Emails corresponding to %s found: %s", othersearch, uids[0].decode())
+        uidstofetch = uids[0].decode().split()
+        uidstofetch = list(uid for uid in uidstofetch if uid not in self.cache)
+        with self.connlock:
+            typ, responses = self.conn.uid('fetch', ",".join(uidstofetch), "(UID RFC822.HEADER)")
+        LOGGER.debug("Fetched headers %s: %r", typ, responses)
+        for response in responses:
+            if type(response) is not tuple:
+                #LOGGER.debug("Discarded response %s: %s", type(response), response)
+                continue
+            # read response header
+            msgnum, _, uid, _, _hsize = response[0].decode().split()
+            # hsize = int(hsize.replace('{','').replace('}'))
+            sheader = response[1]
+            header = self.parser.parsebytes(sheader)
+            subject = header['Subject']
+            LOGGER.debug("Checking email uid=%s msgnum=%s: %s", uid, msgnum, subject)               
+            # parse the header
+            m = self.SUBJECT_RX.match(subject)
+            if not m:
+                LOGGER.warn("Unable to parse subject: %s", subject)
+                # put it in cache in order to ignore it from now on
+                self.cache[uid] = {grp:"0" for grp in self.SUBJECT_GROUPS}
+                continue
+            self.cache[uid] = m.groupdict()
+            # tests the header
+            corresponds = True
+            for k, v in m.groupdict().items():
+                if kwargsexpected.get(k) is not None:
+                    if callable(kwargsexpected[k]) and not kwargsexpected[k](v):
+                        corresponds = False
+                        LOGGER.info("Email uid %s does not meet awaited condition on %s", uid, k)
+                        break
+            if corresponds and globalcheck is not None:
+                corresponds = globalcheck(header, m)
+            # stop if ok
+            if corresponds:
+                toreturn.append(uid)
+        return toreturn
+
+def testImapCommunicationChannel(options=None):
+    """Tests the communication channel by file."""
+    channel = ImapCommunicationChannel('imap.gmail.com:ssl', MyCredManager())
+    sid = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)]
+    orig = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)]
+    nreq = "0"
+    nmail = "0"
+    session = "164"
+    last = ImapCommunicationChannel.LAST_LAST
+    # sending bytes
+    data = uuid.uuid4().bytes
+    uid = channel.senddata(**locals())
+    l = channel.checkfordata(sid=sid, orig=orig)
+    assert type(l) == list and l[0] == uid, "Not same uid returned: {} != {}".format(uid, l)
+    kwargs, data2 = channel.retrievedata(uid, False)
+    for k in channel.METADATA:
+        assert kwargs[k] == locals()[k], "Bad key value returned for k={}: {!r} != {!r}".format(k, locals()[k], kwargs[k])
+    assert data2 == data, "Bad data returned: {!r} != {!r}".format(data, data2)
+    channel.deletedata(uid)
+    # sending string
+    data = uuid.uuid4().hex
+    assert type(data) == str, "Bad data type: %r" % data
+    nreq = 1
+    uid = channel.senddata(**locals())
+    l = channel.checkfordata(sid=sid, orig=orig)
+    assert type(l) == list and l[0] == uid, "Not same uid returned: {} != {}".format(uid, l)
+    kwargs, data2 = channel.retrievedata(uid, False)
+    for k in channel.METADATA:
+        assert kwargs[k] == str(locals()[k]), "Bad key value returned for k={}: {!r} != {!r}".format(k, locals()[k], kwargs[k])
+    assert type(data2) == str, "Bad data type returned: %r" % data
+    assert data2 == data, "Bad data returned: {!r} != {!r}".format(data, data2)
+    # cleaning
+    LOGGER.info("Cleaning...")
+    for uid in channel.checkfordata():
+        channel.deletedata(uid)
+    for uid in channel.checkfordata():
+        channel.deletedata(uid)
+
+# list of communication channels
+COMMUNICATION_CHANNELS = {k: v for k, v in globals().items() if type(v) == type and issubclass(v, CommunicationChannel) and v.USABLE}
 
 # ###################################### IMAP Protocol
 
@@ -1116,6 +1317,7 @@ COMMON_ARGUMENTS.add_argument("--id", default=hashlib.sha256(uuid.uuid4().bytes)
 
 def mainTest(*args):
     """Run all tests."""
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)-7s %(message)s')
     if any(h in args for h in '--help -h'.split()):
         print("Run all available tests")
         return
@@ -1123,10 +1325,10 @@ def mainTest(*args):
     success = []
     failed = []
     errors = []
-    for k in globals():
-        if not k.startswith("test"): continue
-        v = globals()[k]
-        if not callable(v): continue
+    testmethods = {k:v for k, v in globals().items() if k.startswith("test") and callable(v)}
+    print(len(testmethods), "tests to run")
+    for k in testmethods:
+        v = testmethods[k]
         print("Running test", k)
         count += 1
         try:
