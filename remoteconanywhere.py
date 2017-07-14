@@ -17,6 +17,9 @@ import base64
 import random
 import argparse
 import uuid, hashlib
+import pickle
+import shutil
+import traceback
 from email.parser import BytesParser
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -141,7 +144,6 @@ def testMyCredManager():
         shadedeshade = MyCredManager.deshadepassword(MyCredManager.shadepassword(testpassword))
         assert testpassword == shadedeshade, testpassword + "!=" + shadedeshade
         assert testpassword != MyCredManager.shadepassword(testpassword), testpassword + "==" + MyCredManager.shadepassword(testpassword)
-testMyCredManager()
 
 # list of credential managers
 CREDENTIAL_MANAGERS = {
@@ -296,19 +298,147 @@ class BashResponder(Responder):
         if self.p is not None:
             self.p.kill()
 
-
-
-
     def close(self):
         self.p.kill()
 
 class CommunicationChannel:
     """Channel of communication"""
-    SUBJECT_GROUPS = 'sid orig session nreq nmail last'.split()
+    METADATA = 'sid orig session nreq nmail last'.split()
+    LAST_LAST = 'last'
+    LAST_NOTLAST = '-'
     
+    SESSION_NEW = '-'
+    
+    # flag to indicate whether all methods are implemented
+    USABLE = False
+    
+    def issymmetric(self):
+        """Indicates if this CommunicationChannel is symmetric. It means that after a senddata,
+        the sent data can be retrieve by the same object using checkfordata.
+        It will be False for Imap/SmtpConnection"""
+        return True
+    
+    def senddata(self, data, **kwargs):
+        """Send the data to the provided arguments
+        @return: if symmetric, return the uid of the message"""
+        raise NotImplementedError
+    
+    def checkkwargs(self, kwargs, globalcheck=None, **kwargsexpected):
+        """Checks a kwargs for expected values.
+        Called in checkfordata (for new found data or cache)
+        @return: True if kwargs corresponds, False otherwise"""
+        for k in self.METADATA:
+            v = kwargsexpected.get(k)
+            if v is None:
+                continue
+            if isinstance(v, str) and kwargs[k] != v:
+                return False
+            if isinstance(v, int) and kwargs[k] != str(v):
+                return False
+            if callable(v) and not callable(kwargs[k]):
+                return False
+        if callable(globalcheck) and not globalcheck(kwargs):
+            return False
+        return True
+    
+    def checkfordata(self, globalcheck=None, **kwargsexpected):
+        """Wait for data that corresponds to the provided checks.
+        May store the uids => kwargs in a cache (must be emptied in deletedata)
+        @return: False if there is no data, otherwise the list of corresponding uids"""
+        raise NotImplementedError
+    
+    def retrievedata(self, uid, deleteafteruse=True):
+        """Retrieve some data.
+        @param uid: the uid as returned by checkfordata
+        @return a tuple (kwargs, data)"""
+        raise NotImplementedError
+
+    def deletedata(self, uid):
+        """Delete some data given the uid.
+        @param uid: the uid as returned by checkfordata"""
+        raise NotImplementedError
+
+class FolderCommunicationChannel(CommunicationChannel):
+    """Channel of communication using a folder
+    uids are the file names directly"""
+    # flag to indicate that all methods are implemented
+    USABLE = True
+    FILENAME = 'RemoteCon,i={sid},r={orig},e={session},r={nreq},m={nmail},a={last},.bin'
+    FILENAME_RX = re.compile(re.sub(r"{(\w+)\}", r"(?P<\1>[a-zA-Z0-9*_.-]+)", FILENAME).replace(' ', r'\s+').replace(',', r',\s*'))
+    #GROUP_PATTERN = ",{group[1]}={value},"
+    
+    def __init__(self, hostname=None, credmanager=None, login=None, password=None):
+        folder = self.folder = hostname
+        if not os.path.isdir(folder):
+            raise argparse.ArgumentError('The hostname must be an existing folder')
+    
+    def issymmetric(self):
+        """Indicates if this CommunicationChannel is symmetric. It means that after a senddata,
+        the sent data can be retrieve by the same object using checkfordata.
+        It will be False for Imap/SmtpConnection"""
+        return True
+    
+    def senddata(self, data, **kwargs):
+        """Send the data to the provided arguments
+        @return: if symmetric, return the uid of the message"""
+        filename = self.FILENAME.format(**kwargs)
+        with open(os.path.join(self.folder, filename), 'wb') as fout:
+            pickle.dump(data, fout)
+        return filename
+
+    def checkfordata(self, globalcheck=None, **kwargsexpected):
+        """Wait for data that corresponds to the provided checks.
+        May store the uids => kwargs in a cache (must be emptied in deletedata)
+        @return: False if there is no data, otherwise the list of corresponding uids"""
+        foundfiles = []
+        for fil in os.listdir(self.folder):
+            m = self.FILENAME_RX.match(fil)
+            if not m: continue
+            kwargs = m.groupdict()
+            if self.checkkwargs(kwargs, globalcheck, **kwargsexpected):
+                foundfiles.append(fil)
+        return foundfiles or False
+    
+    def retrievedata(self, uid, deleteafteruse=True):
+        """Retrieve some data.
+        @param uid: the uid as returned by checkfordata
+        @return a tuple (kwargs, data)"""
+        kwargs = self.FILENAME_RX.match(uid).groupdict()
+        with open(os.path.join(self.folder, uid), 'rb') as fin:
+            data = pickle.load(fin)
+        if deleteafteruse:
+            self.deletedata(uid)
+        return kwargs, data
+
+    def deletedata(self, uid):
+        """Delete some data given the uid.
+        @param uid: the uid as returned by checkfordata"""
+        os.remove(os.path.join(self.folder, uid))
+
+def testFolderCommunicationChannel(options=None):
+    os.makedirs("tempfolder", exist_ok=True)
+    tempfolder = os.path.abspath("tempfolder")
+    channel = FolderCommunicationChannel(tempfolder)
+    sid = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)]
+    orig = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)]
+    nreq = "test"
+    nmail = "0"
+    session = "164"
+    last = FolderCommunicationChannel.LAST_LAST
+    data = uuid.uuid4().bytes
+    uid = channel.senddata(**locals())
+    l = channel.checkfordata(sid=sid, orig=orig)
+    assert type(l) == list and l[0] == uid, "Not same file returned: {} != {}".format(uid, l)
+    kwargs, data2 = channel.retrievedata(uid, False)
+    for k in channel.METADATA:
+        assert kwargs[k] == locals()[k], "Bad key value returned for k={}: {!r} != {!r}".format(k, locals()[k], kwargs[k])
+    assert data2 == data, "Bad data returned: {!r} != {!r}".format(data, data2)
+    shutil.rmtree(tempfolder, ignore_errors=True)
+
 class EmailCommunicationChannel(CommunicationChannel):
     """Communication channel that uses e-mail."""
 
+    SUBJECT_GROUPS = CommunicationChannel.METADATA
     EXPECTED_SUBJECT = "RemoteConnection"
     # sid: destination id
     # orig: origin id
@@ -322,22 +452,63 @@ class EmailCommunicationChannel(CommunicationChannel):
     SEARCH_SUBJECT_PATTERN = "{group}{value},"
     PARSER = parser = BytesParser()
     
-    ORIG_CLIENT = 'client'
-    ORIG_SERVER = 'server'
-    LAST_LAST = 'last'
-    LAST_NOTLAST = '-'
+    HEADER_PYTHON_TYPE = 'PythonType'
+    HEADER_SUBJECT = 'Subject'
+    HEADER_FROM = 'From'
+    HEADER_TO = 'To'
+    HEADER_CONTENT_TYPE = 'Content-Type'
     
-    SESSION_NEW = '-'
-
+    # flag to indicate whether all methods are implemented
+    USABLE = False
+    
     def __init__(self, hostname=None, credmanager=None, login=None, password=None):
         self.hostname = hostname
         self.credmanager = credmanager
         self.login = login
         self.password = password
         self.connected = False
+        self.headerfrom = login 
+        self.headerto = login
     
-    def connect(self, hostname=None, credmanager=None, login=None, password=None):
+    def connect(self):
         self.connected = True
+
+    def senddata(self, data, **kwargs):
+        """Send the data to the provided arguments
+        @return: if symmetric, return the uid of the message"""
+        subject = self.SUBJECT_PATTERN.format(**kwargs)
+        if isinstance(data, str) and len(data) < 1000:
+            mime = MIMEText(data, "plain", "utf-8")
+        else:
+            datatype = type(data).__name__
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+            mime = MIMEApplication(data)
+            mime[self.HEADER_PYTHON_TYPE] = datatype
+        mime[self.HEADER_SUBJECT] = subject
+        mime[self.HEADER_FROM] = self.headerfrom
+        mime[self.HEADER_TO] = self.headerto
+        return self.mime2email(mime)
+    
+    def retrievedata(self, uid, deleteafteruse=True):
+        """Retrieve some data.
+        @param uid: the uid as returned by checkfordata
+        @return a tuple (kwargs, data)"""
+        mime = self.email2mime(uid)
+        m = self.parsesubject(mime)
+        kwargs = m.groupdict()
+        if 'text' in mime[self.HEADER_CONTENT_TYPE]:
+            data = mime.get_payload(decode=True)
+        else:
+            data = mime.get_payload(decode=True)
+            if mime.get(self.HEADER_PYTHON_TYPE, "bytes") == "str":
+                data = data.decode('utf-8')
+        return kwargs, data
+
+    def deletedata(self, uid):
+        """Delete some data given the uid.
+        @param uid: the uid as returned by checkfordata"""
+        return self.deleteemail(uid)
 
     def email2mime(self, uid):
         """Read an e-mail with its uid."""
@@ -347,6 +518,9 @@ class EmailCommunicationChannel(CommunicationChannel):
         """Send an e-mail."""
         raise NotImplementedError
     
+    def deleteemail(self, uid):
+        """Delete an used e-mail from the server"""
+
     @classmethod
     def parsesubject(cls, data):
         """Parse data for a subject
@@ -363,15 +537,12 @@ class EmailCommunicationChannel(CommunicationChannel):
             subject = data['Subject']
         toreturn = cls.SUBJECT_RX.match(subject)
         return toreturn
+
+class ImapCommunicationChannel(CommunicationChannel):
+    """Communication channel that uses only an imap server."""
     
-    def waitforemail(self, sid=None, orig=None, session=None, nreq=None, nmail=None, last=None,
-                     globalcheck=None, deleteafteruse=True):
-        """Wait for a specific email and return it.
-        @param sid, orig, session, nreq, nmail, last: search criteria that can be a string or a function(criteria_value:str)->bool
-        @param globalcheck: a function(mimeheader:Message, parsedsubject:re.MATCH) -> bool called after all checks are ok
-        @return the first e-mail that corresponds to the criteria
-        """
-        raise NotImplementedError
+    # flag to indicate that all methods are implemented
+    USABLE = True
 
 # ###################################### IMAP Protocol
 
@@ -515,10 +686,10 @@ class ImapCommon(EmailCommunicationChannel):
             self.deleteemail(found)
         return parsedemail
 
-
-testm = ImapCommon.SUBJECT_RX.match(ImapCommon.SUBJECT_PATTERN.replace("{","").replace("}","---"))
-assert testm
-assert all(k+"---" == testm.group(k) for k in "sid orig session nreq nmail last".split())
+def testImapCommon(options=None):
+    testm = ImapCommon.SUBJECT_RX.match(ImapCommon.SUBJECT_PATTERN.replace("{","").replace("}","---"))
+    assert testm
+    assert all(k+"---" == testm.group(k) for k in "sid orig session nreq nmail last".split())
 
 class ServerSession:
     session = 0
@@ -942,6 +1113,39 @@ COMMON_ARGUMENTS.add_argument("--credmode", default="DEFAULT", help="The credent
 COMMON_ARGUMENTS.add_argument("--credfile", help="The credential file (default for the one of credmode mode)")
 COMMON_ARGUMENTS.add_argument("--protectcredfile", default=False, const=True, action="store_const", help="Indicates if the credential file must be protected.")
 COMMON_ARGUMENTS.add_argument("--id", default=hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:random.randrange(4,10)], help="Identifier of the instance")
+
+def mainTest(*args):
+    """Run all tests."""
+    if any(h in args for h in '--help -h'.split()):
+        print("Run all available tests")
+        return
+    count = 0
+    success = []
+    failed = []
+    errors = []
+    for k in globals():
+        if not k.startswith("test"): continue
+        v = globals()[k]
+        if not callable(v): continue
+        print("Running test", k)
+        count += 1
+        try:
+            v()
+            success.append(k)
+            print("    Ok!")
+        except AssertionError as e:
+            traceback.print_exc()
+            failed.append((k, e))
+            print("    Failed:", e)
+        except BaseException as e:
+            traceback.print_exc()
+            errors.append((k, e))
+            print("    Error:", repr(e))
+    print(count, "run tests,", len(success), "passed.")
+    if failed:
+        print("   ", len(failed), "failed")
+    if errors:
+        print("   ", len(errors), " in error")
 
 def mainSocket(*args):
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)-7s %(message)s')
