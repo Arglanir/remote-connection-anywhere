@@ -364,8 +364,9 @@ class FolderCommunicationChannel(CommunicationChannel):
     # flag to indicate that all methods are implemented
     USABLE = True
     FILENAME = 'RemoteCon,i={sid},r={orig},e={session},r={nreq},m={nmail},a={last},.bin'
-    FILENAME_RX = re.compile(re.sub(r"{(\w+)\}", r"(?P<\1>[a-zA-Z0-9*_.-]+)", FILENAME).replace(' ', r'\s+').replace(',', r',\s*'))
+    FILENAME_RX = re.compile(re.sub(r"{(\w+)\}", r"(?P<\1>[a-zA-Z0-9*_.-]+)", FILENAME).replace(' ', r'\s+').replace(',', r',\s*')+"$")
     #GROUP_PATTERN = ",{group[1]}={value},"
+    TEMPPATTERN = ".{}.temp"
     
     def __init__(self, hostname=None, credmanager=None, login=None, password=None):
         folder = self.folder = hostname
@@ -383,8 +384,11 @@ class FolderCommunicationChannel(CommunicationChannel):
         @return: if symmetric, return the uid of the message"""
         filename = self.FILENAME.format(**kwargs)
         LOGGER.debug("Writing file %s", filename)
-        with open(os.path.join(self.folder, filename), 'wb') as fout:
+        destfilename = os.path.join(self.folder, filename)
+        tempfilename = os.path.join(self.folder, self.TEMPPATTERN.format(filename))
+        with open(tempfilename, 'wb') as fout:
             pickle.dump(data, fout)
+        os.rename(tempfilename, destfilename)
         return filename
 
     def checkfordata(self, globalcheck=None, **kwargsexpected):
@@ -743,7 +747,7 @@ def testImapCommunicationChannel(options=None):
         channel.deletedata(uid)
 
 # list of communication channels
-COMMUNICATION_CHANNELS = {k: v for k, v in globals().items() if type(v) == type and issubclass(v, CommunicationChannel) and v.USABLE}
+COMMUNICATION_CHANNELS = {k.replace("CommunicationChannel","").lower(): v for k, v in globals().items() if type(v) == type and issubclass(v, CommunicationChannel) and v.USABLE}
 
 # ###################################### IMAP Protocol
 
