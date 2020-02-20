@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 '''
 This script shows how to create socket proxies in python.
 
@@ -11,8 +12,8 @@ import select
 import threading
 import sys
 import asyncio
-from cmath import asin
 
+TEST_LATENCY = 0 # in ms, 0 to cancel
 BUFFERSIZE = 8192
 
 ########################## Thread-based proxy
@@ -82,11 +83,18 @@ def testSocketThreads(port, distanthost, distantport):
 #########################" Asyncio-based proxy
 
 @asyncio.coroutine
-def transmitData(from_reader, to_writer):
+def transmitData(loop, from_reader, to_writer):
     """This coroutine writes everything from the reader to the writer.
     @param from_reader: Reader to read from
     @param to_writer: Writer to send read data to
     @return: The number of bytes sent."""
+    tosend = []
+    @asyncio.coroutine
+    def sender():
+        for data in tosend:
+            to_writer.write(data)
+        tosend[:] = []
+        yield from to_writer.drain()
     totaltransmitted = 0
     try:
         while True:
@@ -94,8 +102,11 @@ def transmitData(from_reader, to_writer):
             if not data:
                 break
             totaltransmitted += len(data)
-            to_writer.write(data)
-            yield from to_writer.drain()
+            tosend.append(data)
+            if TEST_LATENCY:
+                loop.call_later(TEST_LATENCY/1000, sender)
+            else:
+                loop.call_soon(sender)
     except KeyboardInterrupt:
         pass
     except ConnectionResetError:
@@ -113,8 +124,8 @@ def createHandlerClientConnected(loop, distanthost, distantport):
         addr = client_writer.get_extra_info('peername')
         print("Connected to", addr, "(%s pending connections)" % loop.TOTAL_CONNECTIONS)
         distantreader, distantwriter = yield from asyncio.open_connection(distanthost, distantport, loop=loop)
-        t1 = loop.create_task(transmitData(distantreader, client_writer))
-        t2 = loop.create_task(transmitData(client_reader, distantwriter))
+        t1 = loop.create_task(transmitData(loop, distantreader, client_writer))
+        t2 = loop.create_task(transmitData(loop, client_reader, distantwriter))
         transmitted1, transmitted2 = yield from asyncio.gather(t1, t2)
         loop.TOTAL_CONNECTIONS -= 1
         print("End of communication to", addr, "(%s pending connections)" % loop.TOTAL_CONNECTIONS, "(Transmitted: %s/%s)" % (transmitted1, transmitted2))
