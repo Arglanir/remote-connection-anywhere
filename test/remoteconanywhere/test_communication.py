@@ -4,7 +4,7 @@ Created on 4 avr. 2020
 @author: Cedric
 '''
 import unittest
-from remoteconanywhere.communication import *
+from remoteconanywhere.communication import QueueCommunicationSession
 import os
 import threading
 import time

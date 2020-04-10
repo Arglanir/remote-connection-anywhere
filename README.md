@@ -15,14 +15,14 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 
 * ✅ Bases classes ([`CommunicationSession CommunicationClient CommunicationServer`](src/remoteconanywhere/communication.py)))
 * ✅ Test communication through queue ([`QueueCommunicationSession`](src/remoteconanywhere/communication.py)))
-* ✅  Exchange of files through folder (like NFS, or shared folder) ([`FolderCommunicationSession FolderCommClient FolderCommServer`](src/remoteconanywhere/communication.py)))
+* ✅  Exchange of files through folder (like NFS, or shared folder) ([`FolderCommunicationSession FolderCommClient FolderCommServer`](src/remoteconanywhere/folder.py)))
 * 💡 FTP
 * 💡  Imap (e-mail server)
 * 💡 Socket (not really useful)
 
 ### Action clients / servers
 
-* ✅ For test: ([`QueueCommunicationSession`](test/remoteconanywhere/test_communication_folder.py))
+* ✅ For test: ([`EchoActionServer StoreAllActionServer`](test/remoteconanywhere/communication.py))
 * ✅ Console / ✅Shell (Bash or other program) communicating with stdin/stdout/stderr  ([`GenericPipeActionServer PipeActionServer PipeLineClient`](src/remoteconanywhere/pipe.py))
 * 💡 Socket / Connection to other socket (ssh, rdesktop, vnc)
 * 💡 Socket / Connection to local socket
@@ -59,6 +59,7 @@ server.serveForever()
 
 
 ###### on the client side:
+
 # select the client to use
 client = FolderCommClient('/path/to/folder')
 # check server/capabilities

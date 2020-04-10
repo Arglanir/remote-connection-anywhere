@@ -4,11 +4,12 @@ Created on 4 avr. 2020
 @author: Cedric
 '''
 import unittest
-from remoteconanywhere.communication import *
+from remoteconanywhere.communication import EchoActionServer, EchoByteByByteActionServer, StoreAllActionServer
+from remoteconanywhere.folder import FolderCommClient, FolderCommServer
 import os
+import sys
 import threading
 import time
-import sys
 
 def patch_os_remove():
     temp = os.remove
@@ -22,73 +23,6 @@ import logging
 logging.basicConfig(level='DEBUG')
 
 
-class DummyActionServer(ActionServer):
-    '''Stores every message, sends nothing'''
-    def __init__(self):
-        super().__init__("dummy")
-        self.received = []
-        self.session = None
-    def start(self, session):
-        self.session = session
-        self.t = t = threading.Thread(target=self.loop)
-        t.start()
-    
-    def loop(self):
-        while not self.session.closed:
-            received = self.session.receiveChunk()
-            if received:
-                LOGGER.info("Dummy server (session %s) received a chunk of %s bytes", self.session.sid, len(received))
-                self.received.append(received)
-            if received is None:
-                break
-        
-class EchoActionServer(ActionServer):
-    '''Sends back the data that has been received'''
-    def __init__(self):
-        super().__init__("echo")
-        self.session = None
-    def start(self, session):
-        print("Starting echo server, session", session.sid)
-        self.session = session
-        self.t = t = threading.Thread(target=self.loop)
-        t.start()
-    
-    def loop(self):
-        print("Echo server started, session", self.session.sid)
-        while not self.session.closed:
-            received = self.session.receiveChunk()
-            if received:
-                LOGGER.info("Echo server (session %s) received a chunk of %s bytes", self.session.sid, len(received))
-                self.session.send(received)
-            if received is None:
-                break
-        
-class EchoByteByByteActionServer(ActionServer):
-    '''Sends back the data that has been received, after each return line'''
-    def __init__(self):
-        super().__init__("echo2")
-        self.session = None
-    def start(self, session):
-        print("Starting echo server, session", session.sid)
-        self.session = session
-        self.t = t = threading.Thread(target=self.loop)
-        t.start()
-    
-    def loop(self):
-        print("Echo server started, session", self.session.sid)
-        toreturn = bytearray()
-        while not self.session.closed:
-            received = self.session.receiveOneByte()
-            if received is not None:
-                print("Received: ", bytes([received]))
-                toreturn.append(received)
-                if received == 10:
-                    self.session.send(toreturn)
-                    # reset
-                    toreturn = bytearray()
-            else:
-                break
-        
 
 class Test(unittest.TestCase):
     def setUp(self):
@@ -108,7 +42,7 @@ class Test(unittest.TestCase):
         sharedfolder = os.path.join(os.getcwd(), "reception")
         server = FolderCommServer("localhost-server", sharedfolder)
         client = FolderCommClient("localhost-client", sharedfolder)
-        server.registerCapability(DummyActionServer())
+        server.registerCapability(StoreAllActionServer())
         server.registerCapability(EchoActionServer())
         
         server.showCapabilities()
@@ -133,7 +67,7 @@ class Test(unittest.TestCase):
         sharedfolder = os.path.join(os.getcwd(), "reception")
         server = FolderCommServer("localhost-server2", sharedfolder)
         client = FolderCommClient("localhost-client2", sharedfolder)
-        server.registerCapability(DummyActionServer())
+        server.registerCapability(StoreAllActionServer())
         server.registerCapability(EchoByteByByteActionServer())
         
         server.showCapabilities()
