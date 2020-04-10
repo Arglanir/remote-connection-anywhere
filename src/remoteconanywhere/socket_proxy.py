@@ -2,6 +2,9 @@
 '''
 This script shows how to create socket proxies in python.
 
+python3 socket_proxy.py asyncio 8910 www.google.com 443 &
+wget --no-check-certificate https://127.0.0.1:8910
+
 Created on 17 Jul 2017
 
 @author: Cedric Mayer
@@ -12,29 +15,41 @@ import select
 import threading
 import sys
 import asyncio
+import logging
+import os
 
 TEST_LATENCY = 0 # in ms, 0 to cancel
 BUFFERSIZE = 8192
 
+
+LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
+
 ########################## Thread-based proxy
 
-def handleOneConnection(clientsock, distantsock):
+def handleOneConnection(clientsock, distantsock, cancelSock=None):
     """Handler for one connection, that runs in a thread.
     It copies everything from one socket to the other.
     @param clientsock: A client socket
     @param distantsock: Another socket"""
+    listento = (clientsock, distantsock)
+    if cancelSock is not None:
+        listento += (cancelSock,)
+    canceled = False
     try:
         # counter of transmitted data
         transmitted1, transmitted2 = 0, 0
         while True:
             # wait for data
-            rready, _, errors = select.select((clientsock, distantsock), (), (clientsock, distantsock))
+            rready, _, errors = select.select(listento, (), listento)
             if errors:
                 break
             for ready in rready:
                 # read data
                 data = ready.recv(BUFFERSIZE)
                 if not data:
+                    return
+                if ready is cancelSock:
+                    canceled = True
                     return
                 # select destination
                 if ready is distantsock:
@@ -52,13 +67,14 @@ def handleOneConnection(clientsock, distantsock):
         # end of server
         pass
     finally:
-        clientsock.close()
-        distantsock.close()
+        if not canceled:
+            clientsock.close()
+            distantsock.close()
         print("Connection terminated. Transmitted: %s/%s" % (transmitted1, transmitted2))
 
 def testSocketThreads(port, distanthost, distantport):
     """Creates a proxy on given port, to the distanthost and distantport.
-    Each connection in run in a specific thread.
+    Each connection is run in a specific thread.
     @param port: The local port to listen on.
     @param distanthost: The distant host
     @param distantport: The distant port"""
@@ -79,6 +95,22 @@ def testSocketThreads(port, distanthost, distantport):
         t.start()
     print('End of server')
     sock.close()
+
+def findFreePort(start=8000, end=1<<16):
+    """
+    Return a free port
+    @param start: starting port
+    @param end: end port
+    @return: A free port wher you can bind
+    """
+    for port in range(start, end+1):
+        try:
+            sock = socket.socket()
+            sock.bind(('', port))
+            return port
+        finally:
+            sock.close()
+    raise 
 
 #########################" Asyncio-based proxy
 
