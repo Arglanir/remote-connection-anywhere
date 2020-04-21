@@ -5,28 +5,32 @@ Created on 4 avr. 2020
 '''
 import unittest
 from remoteconanywhere.communication import EchoActionServer, EchoByteByByteActionServer, StoreAllActionServer
-from remoteconanywhere.folder import FolderCommClient, FolderCommServer
-import os
 import sys
 import threading
 import time
-
-def patch_os_remove():
-    temp = os.remove
-    def new_remove(*args, **kwargs):
-        print("Removing", *args)
-        temp(*args, **kwargs)
-    os.remove = new_remove
-patch_os_remove()
-
 import logging
-logging.basicConfig(level='DEBUG')
 
 
+logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s %(module)s.%(funcName)s [%(threadName)s] %(message)s')
 
-class Test(unittest.TestCase):
+
+class AbstractCommTest(unittest.TestCase):
+    skipped = False
+    def __init__(self, methodName='runTest'):
+        unittest.TestCase.__init__(self, methodName=methodName)
+        # remove run if still abstract
+        if self.__class__ != AbstractCommTest and not self.skipped:
+            # Rebind `run' from the parent class.
+            self.run = lambda *args, **kwargs: unittest.TestCase.run( self, *args, **kwargs)
+        else:
+            print("Test", self.__class__, "skipped")
+            self.run = lambda *args, **kwargs: None
+        
     def setUp(self):
+        self.server = None
+        self.client = None
         self.toclose = []
+        # concrete class must update server and client
 
 
     def tearDown(self):
@@ -38,19 +42,18 @@ class Test(unittest.TestCase):
         time.sleep(1)
 
 
-    def testFolderCommunication(self):
-        sharedfolder = os.path.join(os.getcwd(), "reception")
-        server = FolderCommServer("localhost-server", sharedfolder)
-        client = FolderCommClient("localhost-client", sharedfolder)
+    def testBasicCommunication(self):
+        server = self.server
+        client = self.client
         server.registerCapability(StoreAllActionServer())
         server.registerCapability(EchoActionServer())
         
         server.showCapabilities()
         
-        self.assertEqual([server.rid], client.listServers())
+        self.assertEqual([server.rid], list(client.listServers()))
         self.assertEqual(set(['echo', 'dummy']), set(client.capabilities(server.rid)))
         
-        threading.Thread(target=server.serveForever).start()
+        threading.Thread(target=server.serveForever, name="server-thread").start()
         self.toclose.append(server.stop)
 
         session = client.openSession(server.rid, "echo")
@@ -63,19 +66,18 @@ class Test(unittest.TestCase):
         data = session.receiveChunk()
         self.assertEqual(data, tosend)
     
-    def testFolderCommunicationByteByByte(self):
-        sharedfolder = os.path.join(os.getcwd(), "reception")
-        server = FolderCommServer("localhost-server2", sharedfolder)
-        client = FolderCommClient("localhost-client2", sharedfolder)
+    def testBasicCommunicationByteByByte(self):
+        server = self.server
+        client = self.client
         server.registerCapability(StoreAllActionServer())
         server.registerCapability(EchoByteByByteActionServer())
         
         server.showCapabilities()
         
-        self.assertEqual([server.rid], client.listServers())
+        self.assertEqual([server.rid], list(client.listServers()))
         self.assertEqual(set(['echo2', 'dummy']), set(client.capabilities(server.rid)))
         
-        threading.Thread(target=server.serveForever).start()
+        threading.Thread(target=server.serveForever, name="server-thread").start()
         self.toclose.append(server.stop)
 
         session = client.openSession(server.rid, "echo2")

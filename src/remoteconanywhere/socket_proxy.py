@@ -110,7 +110,7 @@ def findFreePort(start=8000, end=1<<16):
             return port
         finally:
             sock.close()
-    raise 
+    raise ValueError('Impossible to find a free port in %s-%s' % (start, end))
 
 #########################" Asyncio-based proxy
 

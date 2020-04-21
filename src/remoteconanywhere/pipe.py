@@ -24,6 +24,7 @@ class GenericPipeActionServer(ActionServer):
     STDOUT_HEADER = b'STDOUT'
     STDERR_HEADER = b'STDERR'
     INFO_HEADER = b'INFO'
+    ERROR_HEADER = b'PROBLEM'
     
 
     def __init__(self, name='pipe'):
@@ -34,7 +35,8 @@ class GenericPipeActionServer(ActionServer):
         threading.Thread(target=self.mainLoop, name="%s-%s" % (self.capability, session.sid), args=(session,)).start()
     
     def createProcess(self, session):
-        '''Creates the process that will be given by the session.'''
+        '''Creates the process that will be given by the session.
+        In the first message, the first line is split, this is the program to run'''
         while not session.checkIfDataAvailable():
             time.sleep(0.01)
         data = session.receiveChunk().decode()
@@ -46,7 +48,8 @@ class GenericPipeActionServer(ActionServer):
         try:
             process = subprocess.Popen(programAndArgs, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **self.kwargs)
         except Exception as e:
-            session.send()
+            LOGGER.warning("Impossible to start %s: %s", programAndArgs, e)
+            session.send(self.ERROR_HEADER + str(e).encode('utf-8', errors='replace'))
             raise
         return process
     
@@ -191,7 +194,7 @@ class PipeLineClient():
                 tosend = data.encode('utf-8')
                 if not self.session.closed:
                     self.session.send(tosend)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):
                 self.session.close()
                 time.sleep(0.1)
         LOGGER.info('End of communication')

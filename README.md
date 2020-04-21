@@ -16,7 +16,7 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 * ✅ Bases classes ([`CommunicationSession CommunicationClient CommunicationServer`](src/remoteconanywhere/communication.py)))
 * ✅ Test communication through queue ([`QueueCommunicationSession`](src/remoteconanywhere/communication.py)))
 * ✅  Exchange of files through folder (like NFS, or shared folder) ([`FolderCommunicationSession FolderCommClient FolderCommServer`](src/remoteconanywhere/folder.py)))
-* 💡 FTP
+* ✅ FTP
 * 💡  Imap (e-mail server)
 * 💡 Socket (not really useful)
 
@@ -24,10 +24,10 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 
 * ✅ For test: ([`EchoActionServer StoreAllActionServer`](test/remoteconanywhere/communication.py))
 * ✅ Console / ✅Shell (Bash or other program) communicating with stdin/stdout/stderr  ([`GenericPipeActionServer PipeActionServer PipeLineClient`](src/remoteconanywhere/pipe.py))
-* 💡 Socket / Connection to other socket (ssh, rdesktop, vnc)
-* 💡 Socket / Connection to local socket
+* ✅ Socket / Connection to other socket (ssh, rdesktop, vnc)
+* ✅ Socket / Connection to local socket
 * 💡 Http proxy
-* 💡 SOCKS proxy ?
+* ✅ SOCKS proxy v4 and v4a!
 
 💡 : ideas 
 

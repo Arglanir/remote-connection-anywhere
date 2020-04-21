@@ -4,17 +4,19 @@ Created on 4 avr. 2020
 @author: Cedric
 '''
 import unittest
-from remoteconanywhere.communication import QueueCommunicationSession
-import os
-import threading
+from remoteconanywhere.communication import QueueCommunicationSession, QueueCommClient, QueueCommServer
 import time
-import sys
 
-import logging
-logging.basicConfig(level='DEBUG')
+# initiate logging
+import abstract_comm_test
 
+class TestQueueCommClientServer(abstract_comm_test.AbstractCommTest):
+    def setUp(self):
+        abstract_comm_test.AbstractCommTest.setUp(self)
+        self.client = QueueCommClient()
+        self.server = QueueCommServer()
 
-class Test(unittest.TestCase):
+class TestQueueCommunication(unittest.TestCase):
 
     def testQueueCommSession(self):
         session = QueueCommunicationSession()

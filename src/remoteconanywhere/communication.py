@@ -10,9 +10,9 @@ import re
 import logging
 import pickle
 import time
-import fnmatch
 import threading
 import queue
+from collections import defaultdict
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
 
@@ -60,6 +60,7 @@ class CommunicationClient:
     
     def capabilities(self, rid):
         '''Check the capabilities of a server'''
+        id(rid)
         return []
     
     def openSession(self, rid, service):
@@ -91,6 +92,7 @@ class CommunicationServer:
         self.nextsessionid = 1
         self.stopped = False
         self.openedsessions = set()
+        self.discoverySession = self.createSession(CommunicationSession.TOFROMANY, self.rid, 0)
     
     def registerCapability(self, server):
         self.capabilities[server.capability] = server
@@ -100,11 +102,12 @@ class CommunicationServer:
     
     def checkForNoSessionMessages(self, onlyOne=False):
         '''Returns a list of [('cid', b'data')]'''
-        nosession = self.createSession('ANY', self.rid, 0)
+        nosession = self.discoverySession
         return nosession.discover(onlyOne)
         
     def loopForNoSessionMessages(self):
         '''Wait for a connection to happen, then return a CommunicationSession'''
+        LOGGER.info("Running server %s", self.rid)
         while not self.stopped:
             toprocess = self.checkForNoSessionMessages()
             for onecomm in toprocess:
@@ -115,6 +118,7 @@ class CommunicationServer:
     
     def stop(self, keepcurrentsessions=False):
         '''Stops the server, and close current sessions'''
+        LOGGER.info("Stopping server %s with %s sessions", self.rid, len(self.openedsessions))
         if not keepcurrentsessions:
             for session in list(self.openedsessions):
                 session.close()
@@ -159,6 +163,9 @@ class CommunicationServer:
 
 class CommunicationSession:
     '''A CommunicationSession is something that can send/received data'''
+    
+    TOFROMANY = 'ANY'
+
     def __init__(self, me, other, sid):
         self.me = me
         self.other = other
@@ -180,7 +187,7 @@ class CommunicationSession:
         '''Send data, that can be split if too big'''
         with self.sendingLock:
             n = len(data)
-            LOGGER.debug('Sending %s bytes from %s to %s (session %s msg %s)', n, self.me, self.other, self.sid, self.sent)
+            LOGGER.debug('Sending %s bytes from %s to %s (session %s msg %s)%s', n, self.me, self.other, self.sid, self.sent, ': %s' % data if n < 60 else '')
             if n > self.maxdatalength:
                 m, k = divmod(n, self.maxdatalength)
                 for i in range(m):
@@ -193,14 +200,15 @@ class CommunicationSession:
             if data == self.data_to_close_session:
                 self.closed = True
     
-    def close(self):
+    def close(self, silently=False):
         '''Close the session'''
         if not self.closed:
             if self.sid == 0 or self.sid == '0':
                 self.closed = True
                 # send nothing
             else:
-                self.send(self.data_to_close_session)
+                if not silently:
+                    self.send(self.data_to_close_session)
     
     # Context manager
     def __enter__(self):
@@ -223,6 +231,7 @@ class CommunicationSession:
     
     def discover(self, onlyOne=False):
         '''@return a list of [('other', b'data')]'''
+        id(onlyOne)
         return []
     
     
@@ -286,17 +295,27 @@ class ActionServer:
 class QueueCommunicationSession(CommunicationSession):
     '''This communication session allows handling queues in memory, mainly for tests'''
     
+    EXISTING = dict()
+    
     def __init__(self, me='me', other='other', sid=1):
         CommunicationSession.__init__(self, me, other, sid)
+        LOGGER.info("%s starting %s for %s (sid %s)", me, self.__class__.__name__, other, sid)
         self.recqueue = queue.Queue()
         self.sentqueue = queue.Queue()
+        key = (me, other, sid)
+        if key in self.EXISTING:
+            LOGGER.warn("Session %s already exists", key)
+        self.EXISTING[(me, other, sid)] = self
+        self.thread = None
     
     def deleteLastMessage(self):
         pass
     
     def sendUnit(self, data):
         '''Send some data'''
-        self.sentqueue.put(data)
+        #LOGGER.debug("Putting data %s", data)
+        # creating a copy, in case data is a bytearray that may be cleared
+        self.sentqueue.put(bytes(data))
     
     def checkIfDataAvailable(self):
         '''Returns True if a new chunk is available, False otherwise'''
@@ -304,7 +323,15 @@ class QueueCommunicationSession(CommunicationSession):
     
     def discover(self, onlyOne=False):
         '''@return a list of [('other', b'data')]'''
-        return []
+        toreturn = []
+        for (one, two, sid), session in self.EXISTING.items():
+            if (two == self.me or two == CommunicationSession.TOFROMANY) and (two, one, sid) not in self.EXISTING:
+                data = session.memoryGetSentData()
+                if data:
+                    toreturn.append((one, data))
+                    if onlyOne:
+                        return toreturn
+        return toreturn
     
     def receiveRawChunk(self):
         '''Receives some data (one chunk)
@@ -328,23 +355,90 @@ class QueueCommunicationSession(CommunicationSession):
     
     def inexorablyLinkQueue(self, other):
         '''Creates a thread that copies what is in one queue to another'''
+        if self == other:
+            raise ValueError("You cannot link one queue %s-%s-%s to itself..." % (self.me, self.other, self.sid))
         self.other = other.me
         other.other = self.me
+        if other.closed or self.closed:
+            raise ValueError("Sessions are closed already")
+        if other.thread is not None or self.thread is not None:
+            if other.thread == self.thread:
+                LOGGER.warning("Queue sessions %s are already linked together.", self.sid)
+            else:
+                raise ValueError("Sessions (%s %s %s) are already linked but not to each other" % (self.me, self.other, self.sid))
         def torun():
+            LOGGER.info("Linking %s %s session %s together", self.me, self.other, self.sid)
             infinite = True
-            while (infinite and not self.closed) or not self.sentqueue.empty() or not other.sentqueue.empty():
+            while (infinite and not self.closed and not other.closed) or not self.sentqueue.empty() or not other.sentqueue.empty():
                 for a,b in ((self, other), (other, self)):
                     try:
                         data = a.sentqueue.get(timeout=0.001)
+                        LOGGER.debug("Transfering data %s from %s to %s", data, a.me, b.me)
                         b.recqueue.put(data)
                         if data == self.data_to_close_session:
                             infinite = False
                     except queue.Empty:
                         pass
-        threading.Thread(target=torun, name='LinkedQueueCommSession-%s-%s' % (self.me, other.me), daemon=True).start()
+            LOGGER.info("End of linking between %s and %s session %s", self.me, self.other, self.sid)
+            self.thread = other.thread = None
+        self.thread = other.thread = threading.Thread(target=torun,
+                                                      name='LinkedQueueCommSession-%s-%s-%s' % (self.me, other.me, self.sid),
+                                                      daemon=True)
+        self.thread.start()
 
 
+class QueueCommClient(CommunicationClient):
+    RIDS = dict()
+    
+    def __init__(self, cid='queue-client'):
+        super().__init__(cid)
+        self.sessions = defaultdict(list)
+        for key in list(QueueCommunicationSession.EXISTING.keys()):
+            if self.cid == key[0] or self.cid == key[1]:
+                LOGGER.warn("Removing existing queue session %s", key)
+                del QueueCommunicationSession.EXISTING[key]
+    
+    def createSession(self, cid, rid, sid):
+        #keyme = (cid, rid, sid)
+        q = QueueCommunicationSession(cid, rid, sid)
+        self.sessions[rid].append(q)
+        keyother = (rid, cid, sid)
+        if keyother in QueueCommunicationSession.EXISTING:
+            other = QueueCommunicationSession.EXISTING[keyother]
+            q.inexorablyLinkQueue(other)
+        return q
+    
+    def listServers(self):
+        return self.RIDS.keys()
+    
+    def capabilities(self, rid):
+        return self.RIDS.get(rid).capabilities.keys()
 
+class QueueCommServer(CommunicationServer):
+    def __init__(self, rid='queue-server'):
+        self.sessions = defaultdict(list)
+        for key in list(QueueCommunicationSession.EXISTING.keys()):
+            if rid == key[0] or rid == key[1]:
+                LOGGER.warn("Removing existing queue session %s", key)
+                del QueueCommunicationSession.EXISTING[key]
+        super().__init__(rid)
+    
+    def createSession(self, cid, rid, sid):
+        q = QueueCommunicationSession(rid, cid, sid)
+        #keyme = (rid, cid, sid)
+        #if keyme in QueueCommunicationSession.EXISTING:
+        #    q = QueueCommunicationSession.EXISTING[keyme]
+        keyother = (cid, rid, sid)
+        if keyother in QueueCommunicationSession.EXISTING:
+            other = QueueCommunicationSession.EXISTING[keyother]
+            q.inexorablyLinkQueue(other)
+        self.sessions[cid].append(q)
+        return q
+    
+    def showCapabilities(self):
+        QueueCommClient.RIDS[self.rid] = self
+
+    
 
 
 class StoreAllActionServer(ActionServer):
@@ -355,7 +449,7 @@ class StoreAllActionServer(ActionServer):
         self.session = None
     def start(self, session):
         self.session = session
-        self.t = t = threading.Thread(target=self.loop)
+        self.t = t = threading.Thread(target=self.loop, name="store-server")
         t.start()
     
     def loop(self):
@@ -375,12 +469,14 @@ class EchoActionServer(ActionServer):
     def start(self, session):
         print("Starting echo server, session", session.sid)
         self.session = session
-        self.t = t = threading.Thread(target=self.loop)
+        self.t = t = threading.Thread(target=self.loop, name="echo-server")
         t.start()
     
     def loop(self):
         print("Echo server started, session", self.session.sid)
         while not self.session.closed:
+            while not self.session.checkIfDataAvailable() and not self.session.closed:
+                time.sleep(0.1)
             received = self.session.receiveChunk()
             if received:
                 LOGGER.info("Echo server (session %s) received a chunk of %s bytes", self.session.sid, len(received))
@@ -396,7 +492,7 @@ class EchoByteByByteActionServer(ActionServer):
     def start(self, session):
         print("Starting echo server, session", session.sid)
         self.session = session
-        self.t = t = threading.Thread(target=self.loop)
+        self.t = t = threading.Thread(target=self.loop, name="echo2-server")
         t.start()
     
     def loop(self):
@@ -405,12 +501,13 @@ class EchoByteByByteActionServer(ActionServer):
         while not self.session.closed:
             received = self.session.receiveOneByte()
             if received is not None:
-                print("Received: ", bytes([received]))
-                toreturn.append(received)
-                if received == 10:
+                LOGGER.info("Received: %s", received)
+                toreturn.extend(received)
+                if received == b'\n':
+                    LOGGER.info("Sending back %s", toreturn)
                     self.session.send(toreturn)
                     # reset
-                    toreturn = bytearray()
+                    toreturn.clear()
             else:
                 break
         
