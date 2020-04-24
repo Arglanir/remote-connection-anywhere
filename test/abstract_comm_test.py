@@ -11,7 +11,7 @@ import time
 import logging
 
 
-logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s %(module)s.%(funcName)s [%(threadName)s] %(message)s')
+logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s [%(threadName)s] %(module)s.%(funcName)s %(message)s')
 
 
 class AbstractCommTest(unittest.TestCase):

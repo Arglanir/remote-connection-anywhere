@@ -17,7 +17,8 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 * ✅ Test communication through queue ([`QueueCommunicationSession`](src/remoteconanywhere/communication.py)))
 * ✅  Exchange of files through folder (like NFS, or shared folder) ([`FolderCommunicationSession FolderCommClient FolderCommServer`](src/remoteconanywhere/folder.py)))
 * ✅ FTP
-* 💡  Imap (e-mail server)
+* ✅  Imap (e-mail server)
+  * 💡 Imap with notifications/shared connections (otherwise multiple searches may be too big for the server)
 * 💡 Socket (not really useful)
 
 ### Action clients / servers
@@ -39,6 +40,14 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 See [src/remoteconanywhere/cred.py](src/remoteconanywhere/cred.py)
 * ✅  .netrc file
 * ✅ local file  
+
+### What to do next?
+* 💡 : Method to clean shared space
+* 💡 : commands to all/one servers:
+  * redistribute capabilities (if cleaned by a client)
+  * stop
+  * display statistics (opened sessions, all sessions since start, etc)
+
 
 ## How to run it
 ```python
@@ -74,7 +83,7 @@ PipeLineClient(session).start()
 
 
 ## How to run it (old)
-🚧 In construction, old API
+🚧 In construction, old API, kept here for the parameters, when a new bash api will be written
 
 ```bash
 python3 test_socket.py asyncio 8910 www.google.com 443 &

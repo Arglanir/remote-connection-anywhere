@@ -297,6 +297,8 @@ class TestSocks(unittest.TestCase):
             frontend.stop()
             server.stop()
 
+    # TODO: test bind
+
 if __name__ == "__main__":
     #import sys;sys.argv = ['', 'Test.testStruct']
     unittest.main()

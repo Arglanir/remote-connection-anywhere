@@ -141,10 +141,10 @@ class FtpCommServer(CommunicationServer):
     
     def __init__(self, rid, ftpFactory, share=False):
         '''Initializes a server'''
-        super().__init__(rid)
         self.ftpFactory = ftpFactory
         self.currentftp = None
         self.share = share
+        super().__init__(rid)
     
     @property
     def ftp(self):
@@ -185,10 +185,10 @@ class FtpCommServer(CommunicationServer):
 class FtpCommClient(CommunicationClient):
 
     def __init__(self, cid, ftpFactory, share=False):
-        super().__init__(cid)
         self.ftpFactory = ftpFactory
         self.currentftp = None
         self.share = share
+        super().__init__(cid)
     
     @property
     def ftp(self):

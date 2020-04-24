@@ -1,40 +1,23 @@
 '''
-Created on 13 avr. 2020
+Created on 23 avr. 2020
 
 @author: Cedric
 '''
 import unittest
-from configurationoftests import ftpFactory, FOLDER_SHARED_WITH_FTP, FTPFOLDER
-from remoteconanywhere.ftp import FtpCommClient, FtpCommServer, FtpCommunicationSession
-from abstract_comm_test import AbstractCommTest
-import os
-from remoteconanywhere.folder import FolderCommServer, FolderCommClient
+import abstract_comm_test
+from configurationoftests import imapFactory
+from remoteconanywhere.imap import ImapCommSession , Imap4CommServer,\
+    Imap4CommClient
 
-SHAREDFOLDER = os.path.join(os.getcwd(), "reception",FTPFOLDER)
-if FOLDER_SHARED_WITH_FTP:
-    os.makedirs(os.path.join(os.getcwd(), "reception"), exist_ok=True)
-    def cleaning():
-        for fil in os.listdir(SHAREDFOLDER):
-            path = os.path.join(SHAREDFOLDER, fil)
-            if os.path.isdir(path):
-                os.rmdir(path)
-            else:
-                os.remove(path)
-            print("File", fil, "still exists at the end.")
-        os.rmdir(SHAREDFOLDER)
-else:
-    def cleaning():
-        pass
+class TestImapComm(unittest.TestCase):
 
-class TestFtpCommunication(unittest.TestCase):
     def setUp(self):
-        self.sess1 = FtpCommunicationSession('1', '2', 99, ftpFactory())
-        self.sess2 = FtpCommunicationSession('2', '1', 99, ftpFactory())
+        self.sess1 = ImapCommSession('1', '2', 99, imapFactory())
+        self.sess2 = ImapCommSession('2', '1', 99, imapFactory())
     
     def tearDown(self):
         self.sess1.close(True)
         self.sess2.close(True)
-        cleaning()
 
     def testSimpleCommunication(self):
         tosend = b"Some data"
@@ -74,53 +57,17 @@ class TestFtpCommunication(unittest.TestCase):
         self.assertEqual(b'a', self.sess2.receiveOneByte(0.01))
         self.assertEqual(None, self.sess2.receiveOneByte(0.01))
 
-class TestFullFtp(AbstractCommTest):
+class TestFullImap(abstract_comm_test.AbstractCommTest):
     def setUp(self):
         #self.skipTest("because")
         super().setUp()
-        self.server = FtpCommServer("localhost-server", ftpFactory, share=False)
-        self.client = FtpCommClient("localhost-client", ftpFactory, share=False)
+        self.server = Imap4CommServer("localhost-server", imapFactory)
+        self.client = Imap4CommClient("localhost-client", imapFactory)
 
     def tearDown(self):
         super().tearDown()
-        cleaning()
+        #cleaning()
     
-    #skipped = True
-    
-
-class TestClientFtp(AbstractCommTest):
-    def setUp(self):
-        #self.skipTest("because")
-        super().setUp()
-        sharedfolder = SHAREDFOLDER
-        self.server = FolderCommServer("localhost-server", sharedfolder)
-        self.client = FtpCommClient("localhost-client", ftpFactory, share=False)
-    def tearDown(self):
-        super().tearDown()
-        cleaning()
-        
-    if not FOLDER_SHARED_WITH_FTP:
-        # cannot communicate with each other: skip it
-        skipped = True
-
-
-
-
-class TestServerFtp(AbstractCommTest):
-    def setUp(self):
-        super().setUp()
-        sharedfolder = SHAREDFOLDER
-        self.server = FtpCommServer("localhost-server", ftpFactory, share=False)
-        self.client = FolderCommClient("localhost-client", sharedfolder)
-
-    def tearDown(self):
-        super().tearDown()
-        cleaning()
-
-    if not FOLDER_SHARED_WITH_FTP:
-        # cannot communicate with each other: skip it
-        skipped = True
-
 
 if __name__ == "__main__":
     #import sys;sys.argv = ['', 'Test.testName']

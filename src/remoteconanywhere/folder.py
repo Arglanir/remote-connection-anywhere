@@ -119,7 +119,6 @@ class FolderCommServer(CommunicationServer):
     
     def __init__(self, rid, folderReception, folderEmission=None):
         '''Initializes a server'''
-        super().__init__(rid)
         if folderEmission is None:
             folderEmission = folderReception
         self.folderReception = folderReception
@@ -127,6 +126,7 @@ class FolderCommServer(CommunicationServer):
         for dire in (folderEmission, folderReception):
             if not os.path.exists(dire):
                 os.makedirs(dire)
+        super().__init__(rid)
     
     def createSession(self, cid, rid, sid):
         return FolderCommunicationSession(rid, cid, sid, self.folderReception, self.folderEmission)

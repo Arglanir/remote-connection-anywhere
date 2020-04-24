@@ -202,6 +202,7 @@ class CommunicationSession:
     
     def close(self, silently=False):
         '''Close the session'''
+        LOGGER.info("Connection %s between %s and %s closing %s", self.sid, self.me, self.other, "silently" if silently else "")
         if not self.closed:
             if self.sid == 0 or self.sid == '0':
                 self.closed = True
@@ -224,6 +225,7 @@ class CommunicationSession:
     def sendUnit(self, data):
         '''Send some data'''
         # implement me!
+        # remember to increase sent
     
     def checkIfDataAvailable(self):
         '''Returns True if a new chunk is available, False otherwise'''
