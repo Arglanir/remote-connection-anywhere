@@ -240,6 +240,9 @@ class Socks4Backend(ActionServer):
             time.sleep(SocksFrontEnd.LOOP_TIMEOUT)
         chunk = session.receiveChunk()
         LOGGER.debug("Received data to open session: %s", chunk)
+        if not chunk:
+            LOGGER.info("Session probably already closed.")
+            return
         if chunk.startswith(SocksFrontEnd.HEADER_DATA):
             chunk = chunk[len(SocksFrontEnd.HEADER_DATA):]
         try:

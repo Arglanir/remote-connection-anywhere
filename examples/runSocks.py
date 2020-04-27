@@ -40,6 +40,6 @@ SocksFrontEnd.LOOP_TIMEOUT = 1
 # let's go!
 try:
     server.serveForever()
-except:
+finally:
     server.stop()
     time.sleep(1)
