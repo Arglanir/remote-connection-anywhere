@@ -16,8 +16,8 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 * ✅ Bases classes ([`CommunicationSession CommunicationClient CommunicationServer`](src/remoteconanywhere/communication.py)))
 * ✅ Test communication through queue ([`QueueCommunicationSession`](src/remoteconanywhere/communication.py)))
 * ✅  Exchange of files through folder (like NFS, or shared folder) ([`FolderCommunicationSession FolderCommClient FolderCommServer`](src/remoteconanywhere/folder.py)))
-* ✅ FTP
-* ✅  Imap (e-mail server)
+* ✅ FTP ([`FtpCommServer FtpCommunicationSession FtpCommClient`](test/remoteconanywhere/ftp.py))
+* ✅  Imap (e-mail server) ([`Imap4CommServer ImapCommSession Imap4CommClient`](test/remoteconanywhere/imap.py))
   * 💡 Imap with notifications/shared connections (otherwise multiple searches may be too big for the server)
 * 💡 Socket (not really useful)
 
@@ -28,7 +28,7 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 * ✅ Socket / Connection to other socket (ssh, rdesktop, vnc)
 * ✅ Socket / Connection to local socket
 * 💡 Http proxy
-* ✅ SOCKS proxy v4 and v4a!
+* ✅ SOCKS proxy v4 and v4a! ([`Socks4Backend SocksFrontEnd`](test/remoteconanywhere/socks.py))
 
 💡 : ideas 
 
