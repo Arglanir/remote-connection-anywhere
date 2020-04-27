@@ -16,6 +16,7 @@ from collections import defaultdict
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
 
+LOOP_SLEEP = 0.1
 
 '''
 What is a communication layer?
@@ -68,7 +69,7 @@ class CommunicationClient:
         nosession = self.createSession(self.cid, rid, 0)
         nosession.send(CommunicationClient.SPECIAL_MESSAGE_START_SESSION + service.encode('utf-8'))
         while not nosession.checkIfDataAvailable():
-            time.sleep(0.01)
+            time.sleep(LOOP_SLEEP)
         #nosession.deleteLastMessage()
         chunk = nosession.receiveChunk()
         sid = int(chunk)
@@ -114,7 +115,7 @@ class CommunicationServer:
                 self.handleNoSessionMessage(*onecomm)
                 if onecomm[1] == self.SPECIAL_MESSAGE_STOP_SERVER:
                     break
-            time.sleep(0.01)
+            time.sleep(LOOP_SLEEP)
     
     def stop(self, keepcurrentsessions=False):
         '''Stops the server, and close current sessions'''
@@ -176,7 +177,7 @@ class CommunicationSession:
         self.maxdatalength = 500000
         self.cache = None
         self.cacheIndex = None
-        self.cacheUpdateTime = 0.010
+        self.cacheUpdateTime = LOOP_SLEEP
         self.closed = False
         self.data_to_close_session = b'MessageInCommunication:PleaseCloseTheSession'
         self.sendingLock = threading.RLock() # multiple threads can send()

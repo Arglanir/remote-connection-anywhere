@@ -47,10 +47,10 @@ class SocksFrontEnd():
     
     def runSessionDataToSocket(self):
         while not self.stopped:
-            # TODO: add a little sleep?
+            time.sleep(self.LOOP_TIMEOUT)
             for s, c in list(self.session2connexion.items()):
                 # if session is closed, it should not be here anymore
-                if s.checkIfDataAvailable():
+                while s.checkIfDataAvailable():
                     chunk = s.receiveChunk()
                     if chunk:
                         if chunk.startswith(self.HEADER_DATA) and len(chunk) > len(self.HEADER_DATA):
@@ -119,10 +119,11 @@ class SocksFrontEnd():
                         session = connexion2session[c]
                         b = dataToSendByconnex[c]
                         b.extend(data)
+                        LOGGER.debug("Current data to send: %r", "size %s" % len(b) if len(b) > 50 else b)
                         if (len(b) + self.BLOCK_SIZE > session.maxdatalength or
                             (dataSentByConnex[c] == 0 and len(b) >=9 # first message: header must be complete
                              and ((b[4:7] != b'\x00\x00\x00' and 0 in b[8:]) # socks 4 header
-                                  or (b[4:7] == b'\x00\x00\x00' and b[7] != 0 and 0 in b[8:].count(0) >= 2)))): # socks 4a header
+                                  or (b[4:7] == b'\x00\x00\x00' and b[7] != 0 and b[8:].count(0) >= 2)))): # socks 4a header
                             # send first frame with connection information
                             forceSend(b, c, session)
                     else:
@@ -171,7 +172,7 @@ def transmitDataBetween(session, connection, info=None, rest=None):
                 LOGGER.debug("Sending back %r to session %s as no more data", tosend, info)
                 session.send(SocksFrontEnd.HEADER_DATA + tosend)
                 tosend.clear()
-        if session.checkIfDataAvailable():
+        while session.checkIfDataAvailable():
             data = session.receiveChunk()
             if data is None:
                 # end of communication
@@ -234,9 +235,11 @@ class Socks4Backend(ActionServer):
     def start(self, session):
         '''Given a session, able to communicate / start the application'''
         # first chunk is a message
+        LOGGER.info("Starting session %s with %s", session.sid, session.other)
         while not session.checkIfDataAvailable():
             time.sleep(SocksFrontEnd.LOOP_TIMEOUT)
         chunk = session.receiveChunk()
+        LOGGER.debug("Received data to open session: %s", chunk)
         if chunk.startswith(SocksFrontEnd.HEADER_DATA):
             chunk = chunk[len(SocksFrontEnd.HEADER_DATA):]
         try:
@@ -257,8 +260,10 @@ class Socks4Backend(ActionServer):
                 domainname = rest[:second0]
                 connectto = domainname.decode('utf-8') # TODO: check supposed encoding
                 rest = rest[second0 + 1:]
+                LOGGER.debug("Received Socks4a header, to connect to %s", connectto)
             else:
                 connectto = socket.inet_ntoa(struct.pack("!I", connectto))
+                LOGGER.debug("Received Socks4 header, to connect to %s", connectto)
             if header.command == CONNECT:
                 # initialize connection
                 c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

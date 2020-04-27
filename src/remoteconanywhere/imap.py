@@ -11,7 +11,8 @@ import imaplib
 
 from email.parser import BytesParser
 from email.mime.text import MIMEText
-import base64
+from email.policy import SMTP as POLICY
+import base64, threading
 from remoteconanywhere.cred import CredentialManager
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
@@ -51,6 +52,7 @@ class ImapCommSession(CommunicationSession):
         self.cacheSubject = dict()
         self.lastSentMessageUid = None
         self.processed = set()
+        self.imapLock = threading.RLock()
          
     
     def deleteLastMessage(self):
@@ -66,10 +68,17 @@ class ImapCommSession(CommunicationSession):
         mime[self.HEADER_FROM] = self.imapclient.forceHeaderFrom if self.imapclient.forceHeaderFrom else self.me + self.SUFFIX_EMAIL
         mime[self.HEADER_TO] = self.imapclient.forceHeaderTo if self.imapclient.forceHeaderTo else self.other + self.SUFFIX_EMAIL
         
-        maildata = mime.as_bytes()
+        maildata = mime.as_bytes(POLICY)
+        # test parsing:
+        self.PARSER.parsebytes(maildata) # FIXME: remove me
         
-        typ, response = self.imapclient.append(self.imapclient.forceMailbox, None, None, maildata)
+        LOGGER.debug("Mail data of size %s to send: %s", len(maildata), "not displayable" if len(maildata) > 2000 else maildata)
+        with self.imapLock:
+            typ, response = self.imapclient.append(self.imapclient.forceMailbox, None, None, maildata)
         LOGGER.debug("Response from imap server to append: %s %r", typ, response)
+        if typ != 'OK':
+            LOGGER.warning("Seemed to not being able to send data: %r", maildata)
+            raise ValueError("%s" % response)
         if "APPENDUID" in response[0].upper().decode():
             m = self.APPENDUID_RX.search(response[0].decode())
             if m:
@@ -95,8 +104,9 @@ class ImapCommSession(CommunicationSession):
     def deleteemail(self, uid):
         """Delete an used e-mail from the server"""
         LOGGER.debug("Delete e-mail uid %s", uid)
-        _typ, _resp = self.imapclient.uid('store', uid, r'+FLAGS.SILENT \Deleted')
-        self.imapclient.expunge()
+        with self.imapLock:
+            _typ, _resp = self.imapclient.uid('store', uid, r'+FLAGS.SILENT \Deleted')
+            self.imapclient.expunge()
     
     @classmethod
     def extractEmailContentFromResponseHelper(cls, response):
@@ -129,8 +139,13 @@ class ImapCommSession(CommunicationSession):
         othersearch = ["HEADER", "Subject", subject, "NOT DELETED"
                        ]
         LOGGER.debug("Searching for emails that contains %s", othersearch)
-        _typ, uids = client.uid('search', *othersearch)
-        if not uids[0]:
+        with self.imapLock:
+            try:
+                _typ, uids = client.uid('search', *othersearch)
+            except Exception as e:
+                LOGGER.warning("While checking for e-mail, got error: %s", e)
+                uids = None
+        if not uids or not uids[0]:
             LOGGER.debug("Nothing found.")
             return False
         uidstofetch = uids[0].decode().split()
@@ -149,15 +164,16 @@ class ImapCommSession(CommunicationSession):
         client = self.imapclient
         
         for delete, subjectbefore, subjectafter in [
-            (True, *self.nextSubjectToReceive.split(self.other)),
-            (False, *self.EXPECTED_SUBJECT_SENT.format(**self.__dict__).split(self.me))]:
+            [True] + self.nextSubjectToReceive.split(self.other),
+            [False] + self.EXPECTED_SUBJECT_SENT.format(**self.__dict__).split(self.me)]:
             search = ['NOT DELETED']
             if len(subjectbefore) > 2:
                 search += ["HEADER", "Subject", subjectbefore]
             if len(subjectafter) > 2:
                 search += ["HEADER", "Subject", subjectafter]
             LOGGER.debug("Searching for emails that contains %s", search)
-            _typ, uids = client.uid('search', *search)
+            with self.imapLock:
+                _typ, uids = client.uid('search', *search)
             if not uids[0]:
                 LOGGER.debug("Nothing found.")
                 continue
@@ -198,7 +214,8 @@ class ImapCommSession(CommunicationSession):
 
     def receiveEmail(self, uid, delete=True):
         # fetch e-mail
-        typ, resp = self.imapclient.uid('fetch', uid, '(RFC822)')
+        with self.imapLock:
+            typ, resp = self.imapclient.uid('fetch', uid, '(RFC822)')
         LOGGER.debug("Fetch response: %s %r", typ, resp)
         if delete:
             self.deleteemail(uid)
@@ -219,8 +236,9 @@ class ImapCommSession(CommunicationSession):
     
     def close(self, silently=False):
         CommunicationSession.close(self, silently=silently)
-        self.imapclient.close()
-        self.imapclient.logout()
+        with self.imapLock:
+            self.imapclient.close()
+            self.imapclient.logout()
         
 
 
@@ -347,7 +365,7 @@ class Imap4CommServer(CommunicationServer):
         mime[ImapCommSession.HEADER_FROM] = self.imapclient.forceHeaderFrom if self.imapclient.forceHeaderFrom else self.rid + ImapCommSession.SUFFIX_EMAIL
         mime[ImapCommSession.HEADER_TO] = self.imapclient.forceHeaderTo if self.imapclient.forceHeaderTo else self.rid + ImapCommSession.SUFFIX_EMAIL
         
-        maildata = mime.as_bytes()
+        maildata = mime.as_bytes(POLICY)
         
         response = self.imapclient.append(self.imapclient.forceMailbox, None, None, maildata)
         LOGGER.debug("Response to append e-mail for capability: %r", response)
