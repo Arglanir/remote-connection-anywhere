@@ -16,19 +16,19 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 * ✅ Bases classes ([`CommunicationSession CommunicationClient CommunicationServer`](src/remoteconanywhere/communication.py)))
 * ✅ Test communication through queue ([`QueueCommunicationSession`](src/remoteconanywhere/communication.py)))
 * ✅  Exchange of files through folder (like NFS, or shared folder) ([`FolderCommunicationSession FolderCommClient FolderCommServer`](src/remoteconanywhere/folder.py)))
-* ✅ FTP ([`FtpCommServer FtpCommunicationSession FtpCommClient`](test/remoteconanywhere/ftp.py))
-* ✅  Imap (e-mail server) ([`Imap4CommServer ImapCommSession Imap4CommClient`](test/remoteconanywhere/imap.py))
+* ✅ FTP ([`FtpCommServer FtpCommunicationSession FtpCommClient`](src/remoteconanywhere/ftp.py))
+* ✅  Imap (e-mail server) ([`Imap4CommServer ImapCommSession Imap4CommClient`](src/remoteconanywhere/imap.py))
   * 💡 Imap with notifications/shared connections (otherwise multiple searches may be too big for the server)
 * 💡 Socket (not really useful)
 
 ### Action clients / servers
 
-* ✅ For test: ([`EchoActionServer StoreAllActionServer`](test/remoteconanywhere/communication.py))
+* ✅ For test: ([`EchoActionServer StoreAllActionServer`](src/remoteconanywhere/communication.py))
 * ✅ Console / ✅Shell (Bash or other program) communicating with stdin/stdout/stderr  ([`GenericPipeActionServer PipeActionServer PipeLineClient`](src/remoteconanywhere/pipe.py))
 * ✅ Socket / Connection to other socket (ssh, rdesktop, vnc)
 * ✅ Socket / Connection to local socket
 * 💡 Http proxy
-* ✅ SOCKS proxy v4 and v4a! ([`Socks4Backend SocksFrontEnd`](test/remoteconanywhere/socks.py))
+* ✅ SOCKS proxy v4 and v4a! ([`Socks4Backend SocksFrontEnd`](src/remoteconanywhere/socks.py))
 
 💡 : ideas 
 
