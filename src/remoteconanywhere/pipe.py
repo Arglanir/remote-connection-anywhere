@@ -17,7 +17,7 @@ from remoteconanywhere.communication import ActionServer, QueueCommunicationSess
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
 
-
+LOOP_TIME = 0.1
 
 
 class GenericPipeActionServer(ActionServer):
@@ -29,6 +29,7 @@ class GenericPipeActionServer(ActionServer):
 
     def __init__(self, name='pipe'):
         super().__init__(name)
+        self.program = None
     
     def start(self, session):
         ActionServer.start(self, session)
@@ -38,15 +39,17 @@ class GenericPipeActionServer(ActionServer):
         '''Creates the process that will be given by the session.
         In the first message, the first line is split, this is the program to run'''
         while not session.checkIfDataAvailable():
-            time.sleep(0.01)
+            time.sleep(LOOP_TIME)
         data = session.receiveChunk().decode()
-        lines = [l.trim() for l in data.split('\n')]
+        lines = [l.strip() for l in data.split('\n')]
         # first line for the program
         programAndArgs = shlex.split(lines[0])
         # TODO: add cwd and environment
         LOGGER.debug("Starting %s", programAndArgs)
+        self.program = programAndArgs[0]
+        self.basename = os.path.basename(self.program)
         try:
-            process = subprocess.Popen(programAndArgs, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **self.kwargs)
+            process = subprocess.Popen(programAndArgs, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except Exception as e:
             LOGGER.warning("Impossible to start %s: %s", programAndArgs, e)
             session.send(self.ERROR_HEADER + str(e).encode('utf-8', errors='replace'))
@@ -68,7 +71,7 @@ class GenericPipeActionServer(ActionServer):
             if received is None:
                 LOGGER.debug("Ending session %s as client disconnected.", session.sid)
                 break
-            time.sleep(0.01)
+            time.sleep(LOOP_TIME)
         if process.poll() is not None:
             # program was terminated naturally
             session.send(self.INFO_HEADER+str(process.returncode).encode())
@@ -166,6 +169,7 @@ class PipeLineClient():
         '''Read what comes from the session and displays it using print.'''
         LOGGER.info("Starting pipe line client")
         while not self.session.closed:
+            time.sleep(LOOP_TIME)
             data = self.session.receiveChunk()
             if data is None:
                 break
@@ -187,16 +191,16 @@ class PipeLineClient():
     def start(self):
         '''Start listening to input, and starts the thread to listen from the session'''
         threading.Thread(target=self.loopForIncomingStreams, name='receive-data-from-%s' % self.session.other).start()
-        while not self.session.closed:
-            try:
+        try:
+            while not self.session.closed:
                 data = self.getInput()
                 data += "\n"
                 tosend = data.encode('utf-8')
                 if not self.session.closed:
                     self.session.send(tosend)
-            except (KeyboardInterrupt, EOFError):
-                self.session.close()
-                time.sleep(0.1)
+        finally:
+            self.session.close()
+            time.sleep(0.1)
         LOGGER.info('End of communication')
             
 def main(args=(sys.executable, '-i', '-u')):
