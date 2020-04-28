@@ -267,8 +267,8 @@ def createImapClient(hostname, port=None, ssl=True, tls=False, credmanager=Crede
         try:
             client.login(login, password)
             break
-        except client.error:
-            pass
+        except client.error as e:
+            LOGGER.warning("Impossible to connect: %s", e)
         # bad connection
         login, password = credmanager.badcredentials(hostname, login=login)
         # restart connection
