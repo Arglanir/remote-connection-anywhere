@@ -26,7 +26,7 @@ except:
     sys.exit(1)
 
 try:
-    PORT = sys.argv[2]
+    PORT = int(sys.argv[2])
 except:
     PORT = findFreePort()
 
