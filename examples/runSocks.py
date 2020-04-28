@@ -14,6 +14,7 @@ from remoteconanywhere.imap import *
 from remoteconanywhere.socks import *
 from remoteconanywhere.cred import MyCredManager
 import remoteconanywhere.communication
+from remoteconanywhere.pipe import GenericPipeActionServer
 
 # reading arguments (you can do a fancier script with argparse...)
 try:
@@ -32,10 +33,12 @@ def imapFactory():
 # creating IMAP communication server
 server = Imap4CommServer('sockson' + socket.gethostname().split('.')[0].replace('-', ''), imapFactory)
 server.registerCapability(Socks4Backend())
+server.registerCapability(GenericPipeActionServer())
 
 # configure timeouts/sleeps (no need of too many searches)
 remoteconanywhere.communication.LOOP_SLEEP = 5
 SocksFrontEnd.LOOP_TIMEOUT = 1
+remoteconanywhere.pipe.LOOP_TIME = 3
 
 # let's go!
 try:
