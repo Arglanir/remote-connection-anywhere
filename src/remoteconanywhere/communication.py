@@ -307,7 +307,7 @@ class QueueCommunicationSession(CommunicationSession):
         self.sentqueue = queue.Queue()
         key = (me, other, sid)
         if key in self.EXISTING:
-            LOGGER.warn("Session %s already exists", key)
+            LOGGER.warning("Session %s already exists", key)
         self.EXISTING[(me, other, sid)] = self
         self.thread = None
     
@@ -398,7 +398,7 @@ class QueueCommClient(CommunicationClient):
         self.sessions = defaultdict(list)
         for key in list(QueueCommunicationSession.EXISTING.keys()):
             if self.cid == key[0] or self.cid == key[1]:
-                LOGGER.warn("Removing existing queue session %s", key)
+                LOGGER.warning("Removing existing queue session %s", key)
                 del QueueCommunicationSession.EXISTING[key]
     
     def createSession(self, cid, rid, sid):
@@ -422,7 +422,7 @@ class QueueCommServer(CommunicationServer):
         self.sessions = defaultdict(list)
         for key in list(QueueCommunicationSession.EXISTING.keys()):
             if rid == key[0] or rid == key[1]:
-                LOGGER.warn("Removing existing queue session %s", key)
+                LOGGER.warning("Removing existing queue session %s", key)
                 del QueueCommunicationSession.EXISTING[key]
         super().__init__(rid)
     
