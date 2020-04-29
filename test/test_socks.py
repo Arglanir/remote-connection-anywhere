@@ -28,6 +28,7 @@ class UpperCaseSocketServer:
         return data.upper()
 
     def run(self):
+        print("Running", self.__class__.__name__, "on port", self.port)
         self.sock = s = socket.socket()
         s.setblocking(False)
         s.bind(('localhost', self.port))
@@ -56,6 +57,13 @@ class UpperCaseSocketServer:
                 inputs.remove(c)
                 c.close()
                 continue
+        # closing all
+        for c in inputs():
+            try:
+                c.close()
+            except:
+                pass
+        print("Stopping", self.__class__.__name__, "on port", self.port)
     
     def start(self):
         threading.Thread(target=self.run).start()
@@ -87,13 +95,15 @@ class TestSocks(unittest.TestCase):
         port = findFreePort()
         s = socket.socket()
         s.bind(('', port))
-        s.listen()
+        s.listen(1)
+        print("Found free port", port)
         port2 = findFreePort()
         self.assertNotEqual(port, port2)
         s.close()
         s = socket.socket()
         s.bind(('', port2))
-        s.listen()
+        print("Found free port", port2)
+        s.listen(1)
         s.close()
     
     def testTransmitData(self):
@@ -130,13 +140,13 @@ class TestSocks(unittest.TestCase):
     
     
     def testSocksFrontEnd(self):
-        # TODO
         try:
             client = QueueCommClient("client-socks")
             portClient = findFreePort()
             frontend = SocksFrontEnd(client, portClient, "test")
             
             frontend.start()
+            time.sleep(0.1)
             
             connection = socket.socket()
             print("Connection")
@@ -174,6 +184,7 @@ class TestSocks(unittest.TestCase):
             
             time.sleep(0.2)
         finally:
+            connection.close()
             frontend.stop()
     
     def testSocks4BackEndConnect(self):
@@ -188,6 +199,7 @@ class TestSocks(unittest.TestCase):
             session = QueueCommunicationSession()
             session.memoryPutSomeData(headerrequest)
             session.memoryPutSomeData(SocksFrontEnd.HEADER_DATA + b'hello world!')
+            time.sleep(0.3)
             backend.start(session)
             time.sleep(0.3)
             returned = session.memoryGetSentData()

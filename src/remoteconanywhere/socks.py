@@ -1,6 +1,11 @@
 '''
 This implements a SOCKS proxy on localhost that connect to a back-end on another network
 
+# https://www.openssh.com/txt/socks4.protocol
+# https://www.openssh.com/txt/socks4a.protocol
+
+# https://tools.ietf.org/html/rfc1928
+
 Created on 17 avr. 2020
 
 @author: Cedric
@@ -16,7 +21,6 @@ import os
 from collections import defaultdict
 import struct
 import ctypes
-import chunk
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
 
@@ -63,7 +67,7 @@ class SocksFrontEnd():
                                 s.close()
                                 c.close()
                         else:
-                            LOGGER.warn("Unable to process message %s", chunk)
+                            LOGGER.warning("Unable to process message %s", chunk)
                 
             
     def run(self):
@@ -120,10 +124,15 @@ class SocksFrontEnd():
                         b = dataToSendByconnex[c]
                         b.extend(data)
                         LOGGER.debug("Current data to send: %r", "size %s" % len(b) if len(b) > 50 else b)
-                        if (len(b) + self.BLOCK_SIZE > session.maxdatalength or
-                            (dataSentByConnex[c] == 0 and len(b) >=9 # first message: header must be complete
-                             and ((b[4:7] != b'\x00\x00\x00' and 0 in b[8:]) # socks 4 header
-                                  or (b[4:7] == b'\x00\x00\x00' and b[7] != 0 and b[8:].count(0) >= 2)))): # socks 4a header
+                        sendiffirstconnection = False
+                        if dataSentByConnex[c] == 0:
+                            # first message, analyse what to send
+                            status, reason = analyseSocksHeader(b)
+                            if status != COMPLETE:
+                                LOGGER.debug("Header %s in status %s because %s", b, status, reason)
+                            if status == COMPLETE or status == INVALID:
+                                sendiffirstconnection = True
+                        if len(b) + self.BLOCK_SIZE > session.maxdatalength or sendiffirstconnection:
                             # send first frame with connection information
                             forceSend(b, c, session)
                     else:
@@ -210,6 +219,49 @@ class SocksError(Exception):
 CONNECT = 1
 BIND = 2
 
+INCOMPLETE = "incomplete"
+COMPLETE = "complete"
+INVALID = "invalid"
+
+def analyseSocksHeader(data):
+    """Analyses the header.
+    @return "complete", locals() if header is complete, 
+            "incomplete", "reason" if header is incomplete,
+            "invalid", "reason" if header is invalid."""
+    if not data:
+        return INCOMPLETE, None
+    
+    if data[0] == 4:
+        if len(data) < ctypes.sizeof(Socks4ClientHeader):
+            return INCOMPLETE, "Header of size {} < {}".format(len(data), ctypes.sizeof(Socks4ClientHeader))
+        headerb = data[:ctypes.sizeof(Socks4ClientHeader)]
+        header = Socks4ClientHeader.from_buffer_copy(headerb)
+        connectto = header.dstip
+        rest = data[ctypes.sizeof(Socks4ClientHeader):]
+        try:
+            first0 = rest.index(0)
+        except ValueError:
+            return INCOMPLETE, "No identification yet"
+        _identification = rest[:first0]
+        rest = rest[first0 + 1:]
+        if 0 < header.dstip < 256: # socks 4a header
+            try:
+                second0 = rest.index(0)
+            except ValueError:
+                return INCOMPLETE, "No hostname yet"
+            # name is given after the id
+            domainname = rest[:second0]
+            connectto = domainname.decode('utf-8') # TODO: check supposed encoding
+            rest = rest[second0 + 1:]
+            LOGGER.debug("Received Socks4a header, to connect to %s", connectto)
+        else:
+            connectto = socket.inet_ntoa(struct.pack("!I", connectto))
+            LOGGER.debug("Received Socks4 header, to connect to %s", connectto)
+        return COMPLETE, dict(locals())
+    
+    if data[0] != 4:
+        return INVALID, "Socks protocol %s not implemented" % data[0]
+        
 
 def findFreePort():
     """
@@ -246,27 +298,17 @@ class Socks4Backend(ActionServer):
         if chunk.startswith(SocksFrontEnd.HEADER_DATA):
             chunk = chunk[len(SocksFrontEnd.HEADER_DATA):]
         try:
-            if len(chunk) < ctypes.sizeof(Socks4ClientHeader):
+            status, reason = analyseSocksHeader(chunk)
+            if status == INCOMPLETE:
+                LOGGER.warning("Incomplete header %s: %s", chunk, reason)
                 raise SocksError(91)
-            headerb = chunk[:ctypes.sizeof(Socks4ClientHeader)]
-            header = Socks4ClientHeader.from_buffer_copy(headerb)
-            if header.version != 4:
+            if status == INVALID:
+                LOGGER.warning("Invalid header %s: %s", chunk, reason)
                 raise SocksError(91)
-            connectto = header.dstip
-            rest = chunk[ctypes.sizeof(Socks4ClientHeader):]
-            first0 = rest.index(0)
-            _identification = rest[:first0]
-            rest = rest[first0 + 1:]
-            if 0 < header.dstip < 256: # socks 4a header 
-                second0 = rest.index(0)
-                # name is given after the id
-                domainname = rest[:second0]
-                connectto = domainname.decode('utf-8') # TODO: check supposed encoding
-                rest = rest[second0 + 1:]
-                LOGGER.debug("Received Socks4a header, to connect to %s", connectto)
-            else:
-                connectto = socket.inet_ntoa(struct.pack("!I", connectto))
-                LOGGER.debug("Received Socks4 header, to connect to %s", connectto)
+            header = reason['header']
+            connectto = reason['connectto']
+            rest = reason['rest']
+
             if header.command == CONNECT:
                 # initialize connection
                 c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -285,19 +327,21 @@ class Socks4Backend(ActionServer):
                                  name='connection-from-%s-to-%s:%s' % (session.sid, connectto, header.dstport)).start()
             elif header.command == BIND:
                 # initialize server
-                c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                c.bind()
+                #c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                #c.bind()
+                LOGGER.warning("BIND called but not implemented.")
+                raise SocksError(92)
             else:
                 raise SocksError(91)
         except SocksError as se:
-            LOGGER.warn("Problem when initializing a new connection:", exc_info=1)
+            LOGGER.warning("Problem when initializing a new connection:", exc_info=1)
             toreturn = Socks4ClientHeader()
             toreturn.version = 0
             toreturn.command = se.errno
             session.send(SocksFrontEnd.HEADER_DATA + ctypes.string_at(ctypes.addressof(toreturn), ctypes.sizeof(toreturn)))
             session.close()
         except Exception:
-            LOGGER.warn("Problem when initializing a new connection:", exc_info=1)
+            LOGGER.warning("Problem when initializing a new connection:", exc_info=1)
             toreturn = Socks4ClientHeader()
             toreturn.version = 0
             toreturn.command = 91
