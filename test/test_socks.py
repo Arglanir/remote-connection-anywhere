@@ -4,7 +4,8 @@ Created on 17 avr. 2020
 @author: Cedric
 '''
 import unittest
-from remoteconanywhere.socks import SOCKS4_CLIENT_HEADER, Socks4ClientHeader, findFreePort, transmitDataBetween, SocksFrontEnd, Socks4Backend
+from remoteconanywhere.socks import SOCKS4_CLIENT_HEADER, Socks4ClientHeader, findFreePort, transmitDataBetween, SocksFrontEnd, Socks4Backend,\
+    analyseSocks5Header, INCOMPLETE, COMPLETE, INVALID
 from remoteconanywhere.communication import QueueCommunicationSession, QueueCommClient, QueueCommServer
 from ctypes import sizeof
 import socket
@@ -105,6 +106,83 @@ class TestSocks(unittest.TestCase):
         print("Found free port", port2)
         s.listen(1)
         s.close()
+    
+    def testAnalyseSock5Header(self):
+        def totest(data, step):
+            resp = analyseSocks5Header(data, step)
+            self.assertEqual(3, len(resp), resp)
+            self.assertIn(resp[0], (INCOMPLETE, COMPLETE, INVALID))
+            if resp[0] == INCOMPLETE:
+                self.assertTrue(resp[1] > len(data), "%s present > %s needed but error ?" % (len(data), resp[1]))
+            if resp[0] == COMPLETE:
+                self.assertTrue(resp[1] <= len(data), "%s present < %s needed but no error ?" % (len(data), resp[1]))
+                if "rest" in resp[2]:
+                    self.assertEqual(len(resp[2]["rest"]) + resp[1], len(data), "consumed=%s, rest=%s but data=%s" % (resp[1], resp[2]["rest"], data))
+                    self.assertTrue(data.endswith(resp[2]["rest"]))
+            return resp
+        # test first step
+        test = totest(b"", 0)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05", 0)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x06", 0)
+        self.assertEqual(INVALID, test[0])
+        test = totest(b"\x05\x01", 0)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00", 0)
+        self.assertEqual(COMPLETE, test[0])
+        
+        test = totest(b"", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x06", 1)
+        self.assertEqual(INVALID, test[0])
+        test = totest(b"\x05\x01\x00", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        # ipv4
+        test = totest(b"\x05\x01\x00\x01", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x01\xaf\x00\x00\x01", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x01\xaf\x00\x00\x01\x00\xff", 1)
+        self.assertEqual(COMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x01\xaf\x00\x00\x01\x00\xffsomedata", 1)
+        self.assertEqual(COMPLETE, test[0])
+        
+        # ipv16
+        test = totest(b"\x05\x01\x00\x04", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x04\xaf\x00\x00\x01", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x04\xaf\x00\x00\x01\x00\xff", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x04" + b"\xaf" * 16 + b"\xff", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x04" + b"\xaf" * 16 + b"\x00\xff", 1)
+        self.assertEqual(COMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x04" + b"\xaf" * 16 + b"\x00\xffsomedata", 1)
+        self.assertEqual(COMPLETE, test[0])
+        
+        test = totest(b"\x05\x01\x00\x02", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x02\xff\xff", 1)
+        self.assertEqual(INVALID, test[0])
+
+        # address string
+        test = totest(b"\x05\x01\x00\x03", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x03\x05", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x03\x05hel", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x03\x05hello", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x03\x05hello\x00", 1)
+        self.assertEqual(INCOMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x03\x05hello\x00\xff", 1)
+        self.assertEqual(COMPLETE, test[0])
+        test = totest(b"\x05\x01\x00\x03\x05hello\x00\xffsomedata", 1)
+        self.assertEqual(COMPLETE, test[0])
+        
     
     def testTransmitData(self):
         session = QueueCommunicationSession()
