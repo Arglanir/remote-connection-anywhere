@@ -30,6 +30,9 @@ try:
 except:
     PORT = findFreePort()
 
+SOCKS_PROTOCOL = 5
+SocksFrontEnd = Socks5FrontEnd if SOCKS_PROTOCOL == 5 else Socks4FrontEnd
+
 # configuring logging
 logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s [%(threadName)s] %(module)s.%(funcName)s %(message)s')
 
@@ -42,9 +45,9 @@ client = Imap4CommClient('socksclienton' + socket.gethostname().split('.')[0].re
 
 # finding the right server to contact
 servers = client.listServers()
-socksrid = [ rid for rid in servers if Socks5FrontEnd.CAPA in client.capabilities(rid) ]
+socksrid = [ rid for rid in servers if SocksFrontEnd.CAPA in client.capabilities(rid) ]
 
-print("Found", Socks5FrontEnd.CAPA, "in", socksrid)
+print("Found", SocksFrontEnd.CAPA, "in", socksrid)
 
 if not socksrid or len(socksrid) > 1:
     print("Cannot proceed.")
@@ -55,7 +58,7 @@ port = PORT
 print("Using port", port)
 
 # socks frontend
-sockslocalfrontend = Socks5FrontEnd(client, port, *socksrid)
+sockslocalfrontend = SocksFrontEnd(client, port, *socksrid)
 # longer loop times
 remoteconanywhere.communication.LOOP_SLEEP = 5
 sockslocalfrontend.LOOP_TIMEOUT = 1
@@ -66,12 +69,17 @@ sockslocalfrontend.start()
 
 # write some information
 with open("environment_linux", "w") as fout:
-    fout.write("export http_proxy=socks5h://localhost:")
+    fout.write("export http_proxy=socks%sh://localhost:" % SOCKS_PROTOCOL)
     fout.write("%s" % port)
     fout.write("\n")
     fout.write("""export {https,ftp,rsync,all}_proxy=$http_proxy\n""")
     fout.write("""export {HTTP,HTTPS,FTP,RSYNC,ALL}_PROXY=$http_proxy\n""")
-    fout.write("""echo "For curl: curl -k --socks5a localhost:%s http://something"\n""" % port)
+    if SOCKS_PROTOCOL == 5:
+        fout.write("""export MAVEN_OPTS="-DsocksProxyHost=127.0.0.1 -DsocksProxyPort=%s"\n""" % port)
+        fout.write("""echo "MAVEN_OPTS set to '$MAVEN_OPTS'"\n""")
+    else:
+        fout.write("""echo "MAVEN_OPTS not set as socks protocol %s"\n""" % SOCKS_PROTOCOL)
+    fout.write("""echo "For curl: curl -k --socks%s localhost:%s http://something"\n""" % (SOCKS_PROTOCOL, port))
     fout.write("""echo "For git: git config --global http.sslVerify false; git config --global http.proxy '$http_proxy'"\n""")
     print("  In a terminal, type the following in order to use the proxy:")
     print("  source", os.path.abspath('environment_linux'))

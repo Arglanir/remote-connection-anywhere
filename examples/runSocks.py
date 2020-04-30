@@ -32,8 +32,10 @@ def imapFactory():
 
 # creating IMAP communication server
 server = Imap4CommServer('sockson' + socket.gethostname().split('.')[0].replace('-', ''), imapFactory)
-server.registerCapability(Socks5Backend())
 server.registerCapability(GenericPipeActionServer())
+# registering both in same server, they do not consume anything
+server.registerCapability(Socks5Backend())
+server.registerCapability(Socks4Backend())
 
 # configure timeouts/sleeps (no need of too many searches)
 remoteconanywhere.communication.LOOP_SLEEP = 5
