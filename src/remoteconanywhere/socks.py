@@ -53,7 +53,9 @@ class Socks4FrontEnd():
         while not self.stopped:
             time.sleep(self.LOOP_TIMEOUT)
             for s, c in list(self.session2connexion.items()):
-                # if session is closed, it should not be here anymore
+                # if session is closed, it should not be here anymore... maybe a little
+                if s.closed:
+                    continue
                 while s.checkIfDataAvailable():
                     chunk = s.receiveChunk()
                     if chunk:
@@ -68,6 +70,8 @@ class Socks4FrontEnd():
                                 c.close()
                         else:
                             LOGGER.warning("Unable to process message %s", chunk)
+                    # closing connection from other point
+                        
     
     def newSession(self):
         session = self.client.openSession(self.rid, self.CAPA)
@@ -128,7 +132,11 @@ class Socks4FrontEnd():
                     dataToSendByconnex[connection] = bytearray()
                     self.session2connexion[session] = connection
                 else:
-                    data = c.recv(self.BLOCK_SIZE)
+                    data = None
+                    try:
+                        data = c.recv(self.BLOCK_SIZE)
+                    except:
+                        LOGGER.warn("Problem while receiving: (will close the connection)", exc_info=True)
                     if data:
                         # send data to other end
                         session = connexion2session[c]
@@ -148,6 +156,10 @@ class Socks4FrontEnd():
                     session = connexion2session[c]
                     self.analyseAndSend(dataSentByConnex, c, b, session, forceSend, True)
                     #forceSend(b, c)
+            for s, c in list(self.session2connexion.items()):
+                # cleaning closed sessions
+                if session.closed:
+                    endOfComm(c)
             if self.stopped:
                 break
         # end of loop: stop all sockets & sessions
@@ -447,7 +459,7 @@ class Socks4Backend(ActionServer):
     '''Implementation of a socks4 proxy'''
     def __init__(self, capability=Socks4FrontEnd.CAPA):
         super().__init__(capability)
-    
+
     def start(self, session):
         '''Given a session, able to communicate / start the application'''
         # first chunk is a message
@@ -520,6 +532,9 @@ class Socks5Backend(ActionServer):
         super().__init__(capability)
     
     def start(self, session):
+        threading.Thread(target=self.startHelper, args=(session,), name="Starting-session-%s-with-%s" % (session.sid, session.other)).start()
+    
+    def startHelper(self, session):
         '''Given a session, able to communicate / start the application'''
         # first chunk is a message
         LOGGER.info("Starting session %s with %s", session.sid, session.other)
