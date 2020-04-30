@@ -32,7 +32,7 @@ def imapFactory():
 
 # creating IMAP communication server
 server = Imap4CommServer('sockson' + socket.gethostname().split('.')[0].replace('-', ''), imapFactory)
-server.registerCapability(Socks4Backend())
+server.registerCapability(Socks5Backend())
 server.registerCapability(GenericPipeActionServer())
 
 # configure timeouts/sleeps (no need of too many searches)

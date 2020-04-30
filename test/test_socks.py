@@ -5,7 +5,7 @@ Created on 17 avr. 2020
 '''
 import unittest
 from remoteconanywhere.socks import SOCKS4_CLIENT_HEADER, Socks4ClientHeader, findFreePort, transmitDataBetween, SocksFrontEnd, Socks4Backend,\
-    analyseSocks5Header, INCOMPLETE, COMPLETE, INVALID
+    analyseSocks5Header, INCOMPLETE, COMPLETE, INVALID, Socks5FrontEnd, Socks5Backend
 from remoteconanywhere.communication import QueueCommunicationSession, QueueCommClient, QueueCommServer
 from ctypes import sizeof
 import socket
@@ -59,7 +59,7 @@ class UpperCaseSocketServer:
                 c.close()
                 continue
         # closing all
-        for c in inputs():
+        for c in inputs:
             try:
                 c.close()
             except:
@@ -217,7 +217,7 @@ class TestSocks(unittest.TestCase):
             session.close()
     
     
-    def testSocksFrontEnd(self):
+    def testSocks4FrontEnd(self):
         try:
             client = QueueCommClient("client-socks")
             portClient = findFreePort()
@@ -243,7 +243,7 @@ class TestSocks(unittest.TestCase):
             session = sessions[0]
             self.assertIn(b"socks", session.memoryGetSentData()) # indicator
             session.memoryPutSomeData(b"3")
-            time.sleep(0.1)
+            time.sleep(0.3)
             
             # session opened for communication
             self.assertEqual(2, len(sessions))
@@ -257,6 +257,61 @@ class TestSocks(unittest.TestCase):
             
             time.sleep(0.1)
             
+            self.assertEqual(b"hello", connection.recv(5))
+            self.assertEqual(frontend.HEADER_DATA + b"world!", session.memoryGetSentData())
+            
+            time.sleep(0.2)
+        finally:
+            connection.close()
+            frontend.stop()
+    
+    
+    def testSocks5FrontEnd(self):
+        try:
+            client = QueueCommClient("client-socks")
+            portClient = findFreePort()
+            frontend = Socks5FrontEnd(client, portClient, "test")
+            
+            frontend.start()
+            time.sleep(0.1)
+            
+            connection = socket.socket()
+            print("Connection")
+            connection.connect(('localhost', portClient))
+            
+            headerrequest = b"\x05\x01\x00"
+            headerrequest2 = b"\x05\x01\x00\x03\x08hostname\x00\xff"
+            dataafter = b"somedata"
+            
+            print("Sending header")
+            connection.sendall(headerrequest)
+            connection.sendall(headerrequest2 + dataafter)
+            
+            time.sleep(0.1)
+            sessions = client.sessions["test"]
+            self.assertEqual(1, len(sessions))
+            # session that asks for a session
+            session = sessions[0]
+            self.assertIn(b"socks", session.memoryGetSentData()) # indicator
+            session.memoryPutSomeData(b"3")
+            time.sleep(0.2)
+            
+            # session opened for communication
+            self.assertEqual(2, len(sessions))
+            session = sessions[-1]
+            
+            self.assertEqual(frontend.HEADER_DATA + headerrequest, session.memoryGetSentData())
+            self.assertEqual(frontend.HEADER_DATA + headerrequest2, session.memoryGetSentData())
+            self.assertEqual(frontend.HEADER_DATA + dataafter, session.memoryGetSentData())
+            
+            print("sending data")
+            session.memoryPutSomeData(frontend.HEADER_DATA + b"\x05\x00")
+            session.memoryPutSomeData(frontend.HEADER_DATA + b"hello")
+            connection.sendall(b"world!")
+            
+            time.sleep(0.1)
+            
+            self.assertEqual(b"\x05\x00", connection.recv(2))
             self.assertEqual(b"hello", connection.recv(5))
             self.assertEqual(frontend.HEADER_DATA + b"world!", session.memoryGetSentData())
             
@@ -287,7 +342,7 @@ class TestSocks(unittest.TestCase):
             session.close()
         finally:
             otherserver.stop()
-        
+    
     def testSocks4BackEndSocks4aConnect(self):
         
         try:
@@ -330,9 +385,53 @@ class TestSocks(unittest.TestCase):
             #otherserver.stop()
             pass
         
+    def testSocks5BackEndConnect(self):
+        
+        try:
+            otherserver = UpperCaseSocketServer()
+            otherserver.start()
+            port = otherserver.port
+            
+            backend = Socks5Backend()
+            session = QueueCommunicationSession()
+            session.memoryPutSomeData(b'\x05\x01\x00')
+            session.memoryPutSomeData(b'\x05\x01\x00\x03\x09localhost' + port.to_bytes(2, 'big'))
+            session.memoryPutSomeData(SocksFrontEnd.HEADER_DATA + b'hello world!')
+            time.sleep(0.1)
+            backend.start(session)
+            time.sleep(0.3)
+            returned = session.memoryGetSentData()
+            self.assertEqual(SocksFrontEnd.HEADER_DATA + b"\x05\x00", returned)
+            returned = session.memoryGetSentData()
+            self.assertEqual(SocksFrontEnd.HEADER_DATA + b"\x05\x00", returned[:len(SocksFrontEnd.HEADER_DATA)+2])
+            returned = session.memoryGetSentData()
+            self.assertEqual(SocksFrontEnd.HEADER_DATA + b"HELLO WORLD!", returned)
+            session.close()
+        finally:
+            otherserver.stop()
+
+    def testSocks5BackEndBadConnect(self):
+        
+        try:
+            port = findFreePort()
+            # but nothing at the end
+            
+            backend = Socks5Backend()
+            session = QueueCommunicationSession()
+            session.memoryPutSomeData(b'\x05\x03\x00\x01\x02')
+            session.memoryPutSomeData(b'\x05\x01\x00\x03\x09localhost' + port.to_bytes(2, 'big'))
+            backend.start(session)
+            time.sleep(0.3)
+            returned = session.memoryGetSentData()
+            self.assertEqual(SocksFrontEnd.HEADER_DATA + b"\x05\x00", returned)
+            returned = session.memoryGetSentData()
+            self.assertEqual(SocksFrontEnd.HEADER_DATA + b"\x05\x03", returned[:len(SocksFrontEnd.HEADER_DATA)+2])
+            self.assertTrue(session.closed)
+        finally:
+            #otherserver.stop()
+            pass
     
-    
-    def testSocksFullProxy(self):
+    def testSocks4FullProxy(self):
         #return
         try:
             client = QueueCommClient("client-socks")
@@ -375,6 +474,65 @@ class TestSocks(unittest.TestCase):
             
             headerresponse = connectionThroughProxy.recv(8)
             print(headerresponse)
+            
+            d2 = connectionThroughProxy.recv(len(d))
+            self.assertEqual(d, d2)
+            
+            connectionThroughProxy.close()
+            
+            time.sleep(1)
+        
+        finally:
+            frontend.stop()
+            server.stop()
+    
+    
+    def testSocks5FullProxy(self):
+        #return
+        try:
+            client = QueueCommClient("client-socks")
+            server = QueueCommServer("server-socks")
+            server.registerCapability(Socks5Backend())
+            threading.Thread(target=server.serveForever, name="server").start()
+            portClient = findFreePort()
+            frontend = Socks5FrontEnd(client, portClient, server.rid)
+            frontend.start()
+            
+            time.sleep(1)
+            
+            print("Start local server")
+            portserver = findFreePort()
+            myserver = socket.socket()
+            myserver.bind(('localhost', portserver))
+            myserver.listen(2)
+            
+            print("Start local client")
+            connectionThroughProxy = socket.socket()
+            connectionThroughProxy.connect(('localhost', portClient))
+            
+            
+            print("Starting communication")
+            connectionThroughProxy.sendall(b"\x05\x01\x00")
+            finalsocksheader = b'\x05\x01\x00\x03\x09localhost' + portserver.to_bytes(2, 'big')
+            connectionThroughProxy.sendall(finalsocksheader)
+            #time.sleep(0.02) # TODO: remove me soon
+            d = b'hello'
+            connectionThroughProxy.sendall(d)
+            print("Waiting for connection")
+            s, _addr = myserver.accept()
+            print("Connected, receiving...")
+            d2 = s.recv(5)
+            self.assertEqual(d, d2)
+            
+            print("Sending back some data")
+            d = b'world!'
+            s.sendall(d)
+            
+            # first header socks5
+            headerresponse = connectionThroughProxy.recv(2)
+            self.assertEquals(b"\x05\x00", headerresponse)
+            headerresponse = connectionThroughProxy.recv(len(finalsocksheader))
+            self.assertEquals(b"\x05\x00", headerresponse[:2])
             
             d2 = connectionThroughProxy.recv(len(d))
             self.assertEqual(d, d2)

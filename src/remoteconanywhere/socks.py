@@ -135,7 +135,7 @@ class Socks4FrontEnd():
                         b = dataToSendByconnex[c]
                         b.extend(data)
                         LOGGER.debug("Current data to send: %r", "size %s" % len(b) if len(b) > 50 else b)
-                        self.analyseAndSend(dataSentByConnex, c, b, session, forceSend)
+                        self.analyseAndSend(dataSentByConnex, c, b, session, forceSend, False)
                     else:
                         # end of connection from here
                         endOfComm(c)
@@ -145,14 +145,16 @@ class Socks4FrontEnd():
                 now = time.time()
                 if dataToSendByconnex[c] and now - lastDateSentByConnex[c] > self.DATA_TIMEOUT:
                     b = dataToSendByconnex[c]
-                    forceSend(b, c)
+                    session = connexion2session[c]
+                    self.analyseAndSend(dataSentByConnex, c, b, session, forceSend, True)
+                    #forceSend(b, c)
             if self.stopped:
                 break
         # end of loop: stop all sockets & sessions
         for c in list(inputs):
             endOfComm(c, True)
     
-    def analyseAndSend(self, dataSentByConnex, connection, binarydata, session, forceSend):
+    def analyseAndSend(self, dataSentByConnex, connection, binarydata, session, forceSend, noMoreReceivedData):
         sendiffirstconnection = False
         if dataSentByConnex[connection] == 0:
             # first message, analyse what to send
@@ -161,7 +163,7 @@ class Socks4FrontEnd():
                 LOGGER.debug("Header %s in status %s because %s", binarydata, status, reason)
             if status == COMPLETE or status == INVALID:
                 sendiffirstconnection = True
-        if len(binarydata) + self.BLOCK_SIZE > session.maxdatalength or sendiffirstconnection:
+        if len(binarydata) + self.BLOCK_SIZE > session.maxdatalength or noMoreReceivedData or sendiffirstconnection:
             # send first frame with connection information
             forceSend(binarydata, connection, session)
 
@@ -183,9 +185,9 @@ class Socks5FrontEnd(Socks4FrontEnd):
         Socks4FrontEnd.finishSession(self, session)
         del self.currentNegotiationBySession[session]
     
-    def analyseAndSend(self, dataSentByConnex, connection, binarydata, session, forceSend):
+    def analyseAndSend(self, dataSentByConnex, connection, binarydata, session, forceSend, noMoreReceivedData):
         sendiffirstconnection = False
-        id(dataSentByConnex)
+        LOGGER.debug("Analysing data to send after %s bytes", dataSentByConnex[connection])
         ntosend = len(binarydata)
         if self.currentNegotiationBySession[session] == 0:
             # first message, analyse what to send
@@ -213,10 +215,12 @@ class Socks5FrontEnd(Socks4FrontEnd):
                 LOGGER.debug("Header %s in status %s because %s", binarydata, status, reason)
             if status == COMPLETE or status == INVALID:
                 sendiffirstconnection = True
+                # no header anymore
                 self.currentNegotiationBySession[session] += 1
-        if len(binarydata) + self.BLOCK_SIZE > session.maxdatalength or sendiffirstconnection:
+        if len(binarydata) + self.BLOCK_SIZE > session.maxdatalength or sendiffirstconnection or noMoreReceivedData:
             # send first frame with connection information
-            forceSend(binarydata, connection, session, onlySend=ntosend)
+            LOGGER.debug("Current negotiation before sending: %s", self.currentNegotiationBySession[session])
+            forceSend(binarydata, connection, session, sendOnly=ntosend)
 
 def transmitDataBetween(session, connection, info=None, rest=None):
     tosend = bytearray()
@@ -571,7 +575,7 @@ class Socks5Backend(ActionServer):
                 LOGGER.warning("Invalid header %s: %s", chunk, reason)
                 raise SocksError(nstatus)
             
-            headera = reason['header']
+            headera = reason['headera']
             addresstype = headera.atyp
             address = reason['address']
             port = reason['port']
