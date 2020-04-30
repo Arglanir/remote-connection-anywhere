@@ -461,6 +461,9 @@ class Socks4Backend(ActionServer):
         super().__init__(capability)
 
     def start(self, session):
+        threading.Thread(target=self.startHelper, args=(session,), name="Starting-session-%s-with-%s" % (session.sid, session.other)).start()
+    
+    def startHelper(self, session):
         '''Given a session, able to communicate / start the application'''
         # first chunk is a message
         LOGGER.info("Starting session %s with %s", session.sid, session.other)
