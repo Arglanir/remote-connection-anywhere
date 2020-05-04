@@ -81,6 +81,7 @@ with open("environment_linux", "w") as fout:
         fout.write("""echo "MAVEN_OPTS not set as socks protocol %s"\n""" % SOCKS_PROTOCOL)
     fout.write("""echo "For curl: curl -k --socks%s localhost:%s http://something"\n""" % (SOCKS_PROTOCOL, port))
     fout.write("""echo "For git: git config --global http.sslVerify false; git config --global http.proxy '$http_proxy'"\n""")
+    fout.write("""echo "For ssh: ssh -o ProxyCommand='/usr/bin/nc -X %s -x 127.0.0.1:%s %%h %%p' user@hostip"\n""" % (SOCKS_PROTOCOL, port))
     print("  In a terminal, type the following in order to use the proxy:")
     print("  source", os.path.abspath('environment_linux'))
 
