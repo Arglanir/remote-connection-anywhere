@@ -17,6 +17,9 @@ from remoteconanywhere.cred import CredentialManager
 
 LOGGER = logging.getLogger(os.path.basename(__file__).replace(".py", ""))
 
+# time before needing to restart connection
+RESTART_AFTER = 3600 # seconds
+
 
 # TODO: Imap with only one IMAP client that dispatch data to queues of sessions
 
@@ -163,6 +166,12 @@ class ImapCommSession(CommunicationSession):
         #: :type client: imaplib.IMAP4
         client = self.imapclient
         
+        uptime = time.time() - client.startingtime
+        LOGGER.debug("Uptime of connection sid=%s: %s", self.sid, uptime)
+        if uptime > RESTART_AFTER:
+            LOGGER.info("Reconnection after %s hour", RESTART_AFTER/3600)
+            self.imapclient = client = client.renew()
+        
         for delete, subjectbefore, subjectafter in [
             [True] + self.nextSubjectToReceive.split(self.other),
             [False] + self.EXPECTED_SUBJECT_SENT.format(**self.__dict__).split(self.me)]:
@@ -296,13 +305,20 @@ def createImapClient(hostname, port=None, ssl=True, tls=False, credmanager=Crede
     client.login = login
     client.startingtime = time.time()
     
+    def renew():
+        client.close()
+        client.logout()
+        newclient = createImapClient(hostname, port, ssl, tls, credmanager, folder, login)
+        return newclient
+    
+    client.renew = renew
+    
     return client
 
 
 class Imap4CommServer(CommunicationServer):
     
     SUBJECT_CAPABILITY = "Capabilities-{rid}-K"
-    RESTART_AFTER = 3600 # seconds
     
     def subjectToRid(self, subject):
         ind = self.SUBJECT_CAPABILITY.index('{rid}')
@@ -320,10 +336,14 @@ class Imap4CommServer(CommunicationServer):
     @property
     def imapclient(self):
         # restart client after 1 hour
-        if self.currentclient is not None and time.time() - self.currentclient.startingtime > self.RESTART_AFTER:
-            self.currentclient.close()
-            self.currentclient.logout()
-            self.currentclient = None
+        if self.currentclient is not None:
+            uptime = time.time() - self.currentclient.startingtime
+            LOGGER.debug("Uptime of server connection: %s", uptime)
+            if uptime > RESTART_AFTER:
+                LOGGER.info("Reconnection after %s hour", RESTART_AFTER/3600)
+                self.currentclient.close()
+                self.currentclient.logout()
+                self.currentclient = None
         
         # test connection
         try:
@@ -408,6 +428,7 @@ class Imap4CommServer(CommunicationServer):
 
 
 class Imap4CommClient(CommunicationClient):
+
     def __init__(self, cid, clientfactory, share=False):
         self.clientfactory = clientfactory
         self.currentclient = None
@@ -417,6 +438,16 @@ class Imap4CommClient(CommunicationClient):
     
     @property
     def imapclient(self):
+        # restart client after 1 hour
+        if self.currentclient is not None:
+            uptime = time.time() - self.currentclient.startingtime
+            LOGGER.debug("Uptime of client connection: %s", uptime)
+            if uptime > RESTART_AFTER:
+                LOGGER.info("Reconnection after %s hour", RESTART_AFTER/3600)
+                self.currentclient.close()
+                self.currentclient.logout()
+                self.currentclient = None
+        
         try:
             self.currentclient.noop()
         except Exception as e:

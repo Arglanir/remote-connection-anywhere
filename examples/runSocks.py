@@ -43,6 +43,7 @@ remoteconanywhere.communication.LOOP_SLEEP = 5
 SocksFrontEnd.LOOP_TIMEOUT = 1
 remoteconanywhere.pipe.LOOP_TIME = 3
 
+#remoteconanywhere.imap.RESTART_AFTER=20
 # cleaning
 server.cleanUp()
 
