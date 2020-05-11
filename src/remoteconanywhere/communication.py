@@ -137,7 +137,9 @@ class CommunicationServer:
             nosession = self.createSession(cid, self.rid, 0)
             nosession.send(messagetosend)
             if not error:
-                self.capabilities[service].start(self.createSession(cid, self.rid, self.nextsessionid))
+                newsession = self.createSession(cid, self.rid, self.nextsessionid)
+                self.openedsessions.add(newsession)
+                self.capabilities[service].start(newsession)
             self.nextsessionid += 1
             # protection against file not removed yet
             #time.sleep(1)
@@ -154,9 +156,14 @@ class CommunicationServer:
             nosession.send(toreturn)
             # protection against file not removed yet
             #time.sleep(1)
+    
+    def cleanUp(self):
+        '''Cleans the shared space from older runs'''
+        # Implement me!
             
     def showCapabilities(self):
         '''Show the capabilities'''
+        # Implement me!
     
     def serveForever(self):
         self.showCapabilities()

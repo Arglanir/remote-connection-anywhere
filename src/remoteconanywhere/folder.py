@@ -143,6 +143,14 @@ class FolderCommServer(CommunicationServer):
                 fout.write(capa)
                 fout.write('\n')
     
+    def cleanUp(self):
+        '''Cleans the shared space from older runs'''
+        for d in set([self.folderReception, self.folderEmission]):
+            LOGGER.warn("Cleaning up %s", d)
+            for f in os.listdir(d):
+                if os.path.isfile(f):
+                    os.remove(os.path.join(d, f))
+    
     def stop(self):
         super().stop()
         os.remove(self.capabilityFile)

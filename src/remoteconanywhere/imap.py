@@ -6,7 +6,7 @@ Created on 21 avr. 2020
 @author: Cedric
 '''
 from remoteconanywhere.communication import CommunicationSession, CommunicationServer, CommunicationClient
-import os, logging, re
+import os, logging, re, time
 import imaplib
 
 from email.parser import BytesParser
@@ -289,11 +289,12 @@ def createImapClient(hostname, port=None, ssl=True, tls=False, credmanager=Crede
     
     LOGGER.info("Connected to %s as %s in folder %s", hostname, login, folder)
     
-    # specific for our use: keep header and mailbox
+    # specific for our use: keep header and mailbox, and creation time
     client.forceHeaderFrom = None
     client.forceHeaderTo = None
     client.forceMailbox = folder
     client.login = login
+    client.startingtime = time.time()
     
     return client
 
@@ -301,6 +302,7 @@ def createImapClient(hostname, port=None, ssl=True, tls=False, credmanager=Crede
 class Imap4CommServer(CommunicationServer):
     
     SUBJECT_CAPABILITY = "Capabilities-{rid}-K"
+    RESTART_AFTER = 3600 # seconds
     
     def subjectToRid(self, subject):
         ind = self.SUBJECT_CAPABILITY.index('{rid}')
@@ -317,12 +319,20 @@ class Imap4CommServer(CommunicationServer):
     
     @property
     def imapclient(self):
+        # restart client after 1 hour
+        if self.currentclient is not None and time.time() - self.currentclient.startingtime > self.RESTART_AFTER:
+            self.currentclient.close()
+            self.currentclient.logout()
+            self.currentclient = None
+        
+        # test connection
         try:
             self.currentclient.noop()
         except:
             LOGGER.debug("Initializing a new connection")
             # new connection
             self.currentclient = self.clientfactory()
+            
         return self.currentclient
     
     def createSession(self, cid, rid, sid):
@@ -345,6 +355,23 @@ class Imap4CommServer(CommunicationServer):
         client = self.imapclient
         for uid in uidstofetch:
             _typ, _resp = client.uid('store', uid, r'+FLAGS.SILENT \Deleted')
+        client.expunge()
+    
+    def cleanUp(self):
+        '''Cleans the shared space from older runs'''
+        LOGGER.warn("Cleaning up shared space...")
+        client = self.imapclient
+        _typ, uids = client.uid('search', 'NOT DELETED')
+        if not uids[0]:
+            # nothing to do
+            LOGGER.info("Folder already cleaned!")
+            return
+        uidstofetch = uids[0].decode().split()
+        responses = set()
+        for uid in uidstofetch:
+            typ, _resp = client.uid('store', uid, r'+FLAGS.SILENT \Deleted')
+            responses.add(typ)
+        LOGGER.info("Cleaned %s e-mails: %s", len(uidstofetch), responses)
         client.expunge()
     
     def showCapabilities(self):
