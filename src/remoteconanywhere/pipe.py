@@ -175,9 +175,9 @@ class PipeLineClient():
                 break
             if data:
                 if data.startswith(GenericPipeActionServer.STDOUT_HEADER):
-                    print(data[len(GenericPipeActionServer.STDOUT_HEADER):].decode(errors='replace'), end='')
+                    print(data[len(GenericPipeActionServer.STDOUT_HEADER):].decode(errors='replace'), end='', flush=True)
                 elif data.startswith(GenericPipeActionServer.STDERR_HEADER):
-                    print(data[len(GenericPipeActionServer.STDERR_HEADER):].decode(errors='replace'), file=sys.stderr, end='')
+                    print(data[len(GenericPipeActionServer.STDERR_HEADER):].decode(errors='replace'), file=sys.stderr, end='', flush=True)
                 elif data.startswith(GenericPipeActionServer.INFO_HEADER):
                     LOGGER.info("Received info: %s", data[len(GenericPipeActionServer.INFO_HEADER):].decode(errors='replace'))
                 else:
