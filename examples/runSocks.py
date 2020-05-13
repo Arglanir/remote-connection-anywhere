@@ -24,7 +24,8 @@ except:
     sys.exit(1)
 
 # configuring logging
-logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s [%(threadName)s] %(module)s.%(funcName)s %(message)s')
+logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s [%(threadName)s] %(module)s.%(funcName)s %(message)s',
+    handlers=[logging.FileHandler("debug.log"), logging.StreamHandler()])
 
 # configuration of IMAP
 def imapFactory():
