@@ -56,22 +56,28 @@ class Socks4FrontEnd():
                 # if session is closed, it should not be here anymore... maybe a little
                 if s.closed:
                     continue
-                while s.checkIfDataAvailable():
-                    chunk = s.receiveChunk()
-                    if chunk:
-                        if chunk.startswith(self.HEADER_DATA) and len(chunk) > len(self.HEADER_DATA):
-                            # transmit data to connection
-                            try:
-                                tosend = chunk[len(self.HEADER_DATA):]
-                                LOGGER.debug("Sending to socket some data from sid=%s: %s", s.sid, tosend)
-                                c.sendall(tosend)
-                            except:
-                                s.close()
-                                c.close()
-                        else:
-                            LOGGER.warning("Unable to process message %s", chunk)
-                    # closing connection from other point
-                        
+                try:
+                    while s.checkIfDataAvailable():
+                        chunk = s.receiveChunk()
+                        if chunk:
+                            if chunk.startswith(self.HEADER_DATA) and len(chunk) > len(self.HEADER_DATA):
+                                # transmit data to connection
+                                try:
+                                    tosend = chunk[len(self.HEADER_DATA):]
+                                    LOGGER.debug("Sending to socket some data from sid=%s: %s", s.sid, tosend)
+                                    c.sendall(tosend)
+                                except:
+                                    s.close()
+                                    c.close()
+                            else:
+                                LOGGER.warning("Unable to process message %s", chunk)
+                        # closing connection from other point
+                except Exception as e:
+                    if s.closed:
+                        # normal
+                        LOGGER.warn("Error while listening on sid=%s but normal because closed: %s", s.sid, e)
+                    else:
+                        LOGGER.error("Error while listening on sid=%s even with session not closed.", s.sid, exc_info=True)
     
     def newSession(self):
         session = self.client.openSession(self.rid, self.CAPA)
