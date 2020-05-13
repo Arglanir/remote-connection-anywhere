@@ -469,6 +469,9 @@ class Socks4Backend(ActionServer):
         LOGGER.info("Starting session %s with %s", session.sid, session.other)
         while not session.checkIfDataAvailable():
             time.sleep(Socks4FrontEnd.LOOP_TIMEOUT)
+            if session.elapsedTime > 2*60:
+                LOGGER.warn("Nothing received from %s:%s, not starting session.", session.other, session.sid)
+                return
         chunk = session.receiveChunk()
         LOGGER.debug("Received data to open session: %s", chunk)
         if not chunk:
@@ -503,7 +506,7 @@ class Socks4Backend(ActionServer):
                 session.send(Socks4FrontEnd.HEADER_DATA + ctypes.string_at(ctypes.addressof(toreturn), ctypes.sizeof(toreturn)))
                 threading.Thread(target=transmitDataBetween, args=(session, c, "%s:%s" % (connectto, header.dstport)),
                                  kwargs=dict(rest=rest),
-                                 name='connection-from-%s-to-%s:%s' % (session.sid, connectto, header.dstport)).start()
+                                 name='connection-from-%s:%s-to-%s:%s' % (session.other, session.sid, connectto, header.dstport)).start()
             elif header.command == BIND:
                 # initialize server
                 #c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -543,6 +546,9 @@ class Socks5Backend(ActionServer):
         LOGGER.info("Starting session %s with %s", session.sid, session.other)
         while not session.checkIfDataAvailable():
             time.sleep(SocksFrontEnd.LOOP_TIMEOUT)
+            if session.elapsedTime > 2*60:
+                LOGGER.warn("Nothing received from %s:%s, not starting session.", session.other, session.sid)
+                return
         chunk = session.receiveChunk()
         LOGGER.debug("Received data to open session: %s", chunk)
         if not chunk:
@@ -576,6 +582,10 @@ class Socks5Backend(ActionServer):
             # waiting for second header
             while not session.checkIfDataAvailable():
                 time.sleep(SocksFrontEnd.LOOP_TIMEOUT)
+                if session.elapsedTime > 4*60:
+                    LOGGER.warn("Nothing received after authentication, not starting session.")
+                    raise SocksError(SocksError.SOCKS5_TTL_EXPIRED)
+                    
             chunk = session.receiveChunk()
             LOGGER.debug("Received header 2 to open session: %s", chunk)
             if not chunk:
@@ -623,7 +633,7 @@ class Socks5Backend(ActionServer):
                 session.send(SocksFrontEnd.HEADER_DATA + toreturn)
                 threading.Thread(target=transmitDataBetween, args=(session, c, "%s:%s" % (connectto, port)),
                                  kwargs=dict(rest=rest),
-                                 name='connection-from-%s-to-%s:%s' % (session.sid, connectto, port)).start()
+                                 name='connection-from-%s:%s-to-%s:%s' % (session.other, session.sid, connectto, port)).start()
             elif headera.command == BIND:
                 # initialize server
                 #c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
