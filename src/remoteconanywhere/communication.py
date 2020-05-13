@@ -189,7 +189,16 @@ class CommunicationSession:
         self.data_to_close_session = b'MessageInCommunication:PleaseCloseTheSession'
         self.sendingLock = threading.RLock() # multiple threads can send()
         # self.receivingLock = threading.RLock() not used for the moment, only one thread must read
+        self.startingTime = time.time() # if you want to know some timeout
 
+    @property
+    def elapsedTime(self):
+        '''Computes the elapsed time since creation.'''
+        return time.time() - self.startingTime
+    
+    def resetTime(self):
+        '''Resets the time'''
+        self.startingTime = time.time()
     
     def send(self, data):
         '''Send data, that can be split if too big'''
