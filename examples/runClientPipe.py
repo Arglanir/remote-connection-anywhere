@@ -19,20 +19,27 @@ from remoteconanywhere.cred import MyCredManager
 import remoteconanywhere.communication
 
 remoteconanywhere.pipe.LOOP_TIME = 3
-
+CREDMANAGER = MyCredManager(os.path.join(folder, '.credentials'), True)
 # read arguments
 try:
     HOSTNAME = sys.argv[1]
 except:
-    print("Specify the host name as first argument.")
-    sys.exit(1)
+    try:
+        hosts = CREDMANAGER.knownhosts()
+        if len(hosts) > 1:
+            print("Select hosts between", *hosts)
+            raise Exception
+        HOSTNAME = hosts[0]
+    except:
+        print("Specify the host name as first argument.")
+        sys.exit(1)
 
 # configuring logging
 logging.basicConfig(level='INFO', format='%(asctime)-15s %(levelname)-5s [%(threadName)s] %(module)s.%(funcName)s %(message)s')
 
 # configuring imap
 def imapFactory():
-    return createImapClient(HOSTNAME, ssl=False, tls=True, credmanager=MyCredManager(os.path.join(folder, '.credentials'), True), folder='communication-socks')
+    return createImapClient(HOSTNAME, ssl=False, tls=True, credmanager=CREDMANAGER, folder='communication-socks')
 
 
 # imap communication client

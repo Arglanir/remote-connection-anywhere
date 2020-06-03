@@ -42,6 +42,8 @@ class CredentialManager:
         inputlogin = getinput("".join(("Login", "" if not login else " [default: %s]" % login, ": "))) or login
         password = getpass.getpass("Password: ")
         return (inputlogin, password)
+    def knownhosts(self):
+        return []
 
 class NetRcCredManager(CredentialManager):
     def __init__(self, netrcfile=None, writeback=False):
@@ -74,6 +76,8 @@ class NetRcCredManager(CredentialManager):
                 fout.write(repr(self.netrc).encode("utf-8"))
                 print("File", self.netrcfile, "has been rewritten.")
         return login, password
+    def knownhosts(self):
+        return list(self.netrc.hosts.keys())
 
 class MyCredManager(CredentialManager):
     def __init__(self, file=None, writeback=False):
@@ -127,6 +131,9 @@ class MyCredManager(CredentialManager):
                 json.dump(self.hosts, fout)
                 print("File", self.file, "has been rewritten.")
         return login, password
+    
+    def knownhosts(self):
+        return list(self.hosts.keys())
 
 # list of credential managers
 CREDENTIAL_MANAGERS = {
