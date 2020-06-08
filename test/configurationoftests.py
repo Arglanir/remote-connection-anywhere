@@ -16,3 +16,6 @@ FOLDER_SHARED_WITH_FTP = True
 
 def ftpFactory():
     return createFtpConnection(FTPFOLDER, "127.0.0.1", MyCredManager(CREDFILE, True))
+
+def imapFactory():
+    return None
