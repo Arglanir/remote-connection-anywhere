@@ -17,19 +17,27 @@ import remoteconanywhere.communication
 from remoteconanywhere.pipe import GenericPipeActionServer
 
 # reading arguments (you can do a fancier script with argparse...)
+CREDMANAGER=MyCredManager(os.path.join(folder, '.credentials'), True)
 try:
     HOSTNAME = sys.argv[1]
 except:
-    print("Specify the host name as first argument.")
-    sys.exit(1)
+    try:
+        hosts = CREDMANAGER.knownhosts()
+        if len(hosts) > 1:
+            print("Select hosts between", *hosts)
+            raise Exception
+        HOSTNAME = hosts[0]
+    except:
+        print("Specify the host name as first argument.")
+        sys.exit(1)
 
 # configuring logging
 logging.basicConfig(level='DEBUG', format='%(asctime)-15s %(levelname)-5s [%(threadName)s] %(module)s.%(funcName)s %(message)s',
-    handlers=[logging.FileHandler("debug.log"), logging.StreamHandler()])
+    handlers=[logging.FileHandler("debug.log",mode="w"), logging.StreamHandler()])
 
 # configuration of IMAP
 def imapFactory():
-    return createImapClient(HOSTNAME, ssl=False, tls=True, credmanager=MyCredManager(os.path.join(folder, '.credentials'), True), folder='communication-socks')
+    return createImapClient(HOSTNAME, ssl=False, tls=True, credmanager=CREDMANAGER, folder='communication-socks')
 
 # creating IMAP communication server
 server = Imap4CommServer('sockson' + socket.gethostname().split('.')[0].replace('-', ''), imapFactory)
