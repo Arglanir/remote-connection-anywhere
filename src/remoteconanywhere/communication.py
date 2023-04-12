@@ -48,22 +48,22 @@ class CommunicationClient:
     METADATA = 'cid rid sid'.split()
     MESSAGES = 'capabilities data open stop report'.split()
     SPECIAL_MESSAGE_START_SESSION = b'MessageOutsideCommunication:PleaseStartASession:'
-    
+
     def __init__(self, cid):
         self.cid = cid
-    
+
     def createSession(self, cid, rid, sid):
         raise NotImplementedError
-    
+
     def listServers(self):
         '''List the servers rid'''
         return []
-    
+
     def capabilities(self, rid):
         '''Check the capabilities of a server'''
         id(rid)
         return []
-    
+
     def openSession(self, rid, service):
         '''Starts a session'''
         nosession = self.createSession(self.cid, rid, 0)
@@ -85,7 +85,7 @@ class CommunicationServer:
     SPECIAL_MESSAGE_STOP_SERVER = b'MessageOutsideSession:StopServer'
     GENERIC_SPECIAL_MESSAGE = b'GenericMessageFor:' # + server / action + ":" + method + ":" arguments
     SPECIAL_MESSAGE_ERROR = b'Error:'
-    
+
     def __init__(self, rid):
         '''Initializes a server'''
         self.rid = rid
@@ -94,18 +94,18 @@ class CommunicationServer:
         self.stopped = False
         self.openedsessions = set()
         self.discoverySession = self.createSession(CommunicationSession.TOFROMANY, self.rid, 0)
-    
+
     def registerCapability(self, server):
         self.capabilities[server.capability] = server
-    
+
     def createSession(self, cid, rid, sid):
         raise NotImplementedError
-    
+
     def checkForNoSessionMessages(self, onlyOne=False):
         '''Returns a list of [('cid', b'data')]'''
         nosession = self.discoverySession
         return nosession.discover(onlyOne)
-        
+
     def loopForNoSessionMessages(self):
         '''Wait for a connection to happen, then return a CommunicationSession'''
         LOGGER.info("Running server %s", self.rid)
@@ -116,7 +116,7 @@ class CommunicationServer:
                 if onecomm[1] == self.SPECIAL_MESSAGE_STOP_SERVER:
                     break
             time.sleep(LOOP_SLEEP)
-    
+
     def stop(self, keepcurrentsessions=False):
         '''Stops the server, and close current sessions'''
         LOGGER.info("Stopping server %s with %s sessions", self.rid, len(self.openedsessions))
@@ -124,7 +124,7 @@ class CommunicationServer:
             for session in list(self.openedsessions):
                 session.close()
         self.stopped = True
-    
+
     def handleNoSessionMessage(self, cid, data):
         '''Processes one session message'''
         if data.startswith(CommunicationClient.SPECIAL_MESSAGE_START_SESSION):
@@ -156,22 +156,22 @@ class CommunicationServer:
             nosession.send(toreturn)
             # protection against file not removed yet
             #time.sleep(1)
-    
+
     def cleanUp(self):
         '''Cleans the shared space from older runs'''
         # Implement me!
-            
+
     def showCapabilities(self):
         '''Show the capabilities'''
         # Implement me!
-    
+
     def serveForever(self):
         self.showCapabilities()
         self.loopForNoSessionMessages()
 
 class CommunicationSession:
     '''A CommunicationSession is something that can send/received data'''
-    
+
     TOFROMANY = 'ANY'
 
     def __init__(self, me, other, sid):
@@ -195,11 +195,11 @@ class CommunicationSession:
     def elapsedTime(self):
         '''Computes the elapsed time since creation.'''
         return time.time() - self.startingTime
-    
+
     def resetTime(self):
         '''Resets the time'''
         self.startingTime = time.time()
-    
+
     def send(self, data):
         '''Send data, that can be split if too big'''
         with self.sendingLock:
@@ -216,7 +216,7 @@ class CommunicationSession:
             self.dataSent += n
             if data == self.data_to_close_session:
                 self.closed = True
-    
+
     def close(self, silently=False):
         '''Close the session'''
         LOGGER.info("Connection %s between %s and %s closing %s", self.sid, self.me, self.other, "silently" if silently else "")
@@ -227,40 +227,41 @@ class CommunicationSession:
             else:
                 if not silently:
                     self.send(self.data_to_close_session)
-    
+
     # Context manager
     def __enter__(self):
         return self
     def __exit__(self, _exc_type, _exc_val, _exc_tb):
         self.close()
         return False
-    
-    
+
+
     def deleteLastMessage(self):
         pass
-    
+
     def sendUnit(self, data):
         '''Send some data'''
         # implement me!
         # remember to increase sent
-    
+
     def checkIfDataAvailable(self):
         '''Returns True if a new chunk is available, False otherwise'''
         return False
-    
+
     def discover(self, onlyOne=False):
         '''@return a list of [('other', b'data')]'''
         id(onlyOne)
+        # implement me!
         return []
-    
-    
+
+
     def receiveRawChunk(self):
         '''Receives some data (one chunk)
         @return: None if no more data available, a bytes if data available (possibly empty)'''
         # remember to increase received!
         return b''
-    
-    
+
+
     def receiveChunk(self):
         '''Receives some data (one chunk)
         @return: None if no more data available, a bytes if data available (possibly empty)'''
@@ -274,7 +275,28 @@ class CommunicationSession:
             toreturn = None
             self.closed = True
         return toreturn
-    
+
+
+    def receiveChunkWait(self, timeout=None, raiseTimeoutError=True):
+        '''Receives some data (one chunk)
+        @return: None if no more data available, a bytes if data available
+        @raise: TimeoutError if there is no data available at the end of the waiting period'''
+        if self.closed:
+            return None
+        toreturn = b''
+        end = timeout + time.time() if timeout else None
+        while toreturn is not None and (end is None or end > time.time()):
+            toreturn = self.receiveChunk()
+            if toreturn:
+                return toreturn
+            time.sleep(self.cacheUpdateTime)
+        if toreturn is None: # closed
+            return toreturn
+        if raiseTimeoutError:
+            raise TimeoutError
+        return toreturn
+
+    ################################################################# Cache for one byte
     def receiveOneByte(self, timeout=None):
         '''Receives one byte, or None if timeout is passed.'''
         check = self.checkIfOneByteAvailable(timeout)
@@ -284,7 +306,7 @@ class CommunicationSession:
         index = self.cacheIndex
         self.cacheIndex += 1
         return self.cache[index:index+1]
-    
+
     def checkIfOneByteAvailable(self, timeout=None):
         '''@return True if one byte is available, False if no byte is available, None if session is closed'''
         if self.cache is None or self.cacheIndex >= len(self.cache):
@@ -299,23 +321,25 @@ class CommunicationSession:
                     time.sleep(self.cacheUpdateTime)
             self.cacheIndex = 0
         return self.cache and len(self.cache) > self.cacheIndex
-        
+
+
+
 
 class ActionServer:
     '''Abstract class that describes an action'''
     def __init__(self, capability):
         self.capability = capability
-    
+
     def start(self, session):
         '''Given a session, able to communicate / start the application'''
-        
+
 
 
 class QueueCommunicationSession(CommunicationSession):
     '''This communication session allows handling queues in memory, mainly for tests'''
-    
+
     EXISTING = dict()
-    
+
     def __init__(self, me='me', other='other', sid=1):
         CommunicationSession.__init__(self, me, other, sid)
         LOGGER.info("%s starting %s for %s (sid %s)", me, self.__class__.__name__, other, sid)
@@ -326,20 +350,20 @@ class QueueCommunicationSession(CommunicationSession):
             LOGGER.warning("Session %s already exists", key)
         self.EXISTING[(me, other, sid)] = self
         self.thread = None
-    
+
     def deleteLastMessage(self):
         pass
-    
+
     def sendUnit(self, data):
         '''Send some data'''
         #LOGGER.debug("Putting data %s", data)
         # creating a copy, in case data is a bytearray that may be cleared
         self.sentqueue.put(bytes(data))
-    
+
     def checkIfDataAvailable(self):
         '''Returns True if a new chunk is available, False otherwise'''
         return not self.recqueue.empty()
-    
+
     def discover(self, onlyOne=False):
         '''@return a list of [('other', b'data')]'''
         toreturn = []
@@ -351,7 +375,7 @@ class QueueCommunicationSession(CommunicationSession):
                     if onlyOne:
                         return toreturn
         return toreturn
-    
+
     def receiveRawChunk(self):
         '''Receives some data (one chunk)
         @return: None if no more data available, a bytes if data available (possibly empty)'''
@@ -362,7 +386,7 @@ class QueueCommunicationSession(CommunicationSession):
             return self.recqueue.get(block=False)
         except queue.Empty:
             return b''
-    
+
     def memoryPutSomeData(self, data):
         self.recqueue.put(data)
 
@@ -371,7 +395,7 @@ class QueueCommunicationSession(CommunicationSession):
             return self.sentqueue.get(block=False)
         except queue.Empty:
             return None
-    
+
     def inexorablyLinkQueue(self, other):
         '''Creates a thread that copies what is in one queue to another'''
         if self == other:
@@ -408,7 +432,7 @@ class QueueCommunicationSession(CommunicationSession):
 
 class QueueCommClient(CommunicationClient):
     RIDS = dict()
-    
+
     def __init__(self, cid='queue-client'):
         super().__init__(cid)
         self.sessions = defaultdict(list)
@@ -416,7 +440,7 @@ class QueueCommClient(CommunicationClient):
             if self.cid == key[0] or self.cid == key[1]:
                 LOGGER.warning("Removing existing queue session %s", key)
                 del QueueCommunicationSession.EXISTING[key]
-    
+
     def createSession(self, cid, rid, sid):
         #keyme = (cid, rid, sid)
         q = QueueCommunicationSession(cid, rid, sid)
@@ -426,10 +450,10 @@ class QueueCommClient(CommunicationClient):
             other = QueueCommunicationSession.EXISTING[keyother]
             q.inexorablyLinkQueue(other)
         return q
-    
+
     def listServers(self):
         return self.RIDS.keys()
-    
+
     def capabilities(self, rid):
         return self.RIDS.get(rid).capabilities.keys()
 
@@ -441,7 +465,7 @@ class QueueCommServer(CommunicationServer):
                 LOGGER.warning("Removing existing queue session %s", key)
                 del QueueCommunicationSession.EXISTING[key]
         super().__init__(rid)
-    
+
     def createSession(self, cid, rid, sid):
         q = QueueCommunicationSession(rid, cid, sid)
         #keyme = (rid, cid, sid)
@@ -453,11 +477,11 @@ class QueueCommServer(CommunicationServer):
             q.inexorablyLinkQueue(other)
         self.sessions[cid].append(q)
         return q
-    
+
     def showCapabilities(self):
         QueueCommClient.RIDS[self.rid] = self
 
-    
+
 
 
 class StoreAllActionServer(ActionServer):
@@ -470,7 +494,7 @@ class StoreAllActionServer(ActionServer):
         self.session = session
         self.t = t = threading.Thread(target=self.loop, name="store-server")
         t.start()
-    
+
     def loop(self):
         while not self.session.closed:
             received = self.session.receiveChunk()
@@ -479,7 +503,7 @@ class StoreAllActionServer(ActionServer):
                 self.received.append(received)
             if received is None:
                 break
-        
+
 class EchoActionServer(ActionServer):
     '''Sends back the data that has been received'''
     def __init__(self):
@@ -490,7 +514,7 @@ class EchoActionServer(ActionServer):
         self.session = session
         self.t = t = threading.Thread(target=self.loop, name="echo-server")
         t.start()
-    
+
     def loop(self):
         print("Echo server started, session", self.session.sid)
         while not self.session.closed:
@@ -502,7 +526,7 @@ class EchoActionServer(ActionServer):
                 self.session.send(received)
             if received is None:
                 break
-        
+
 class EchoByteByByteActionServer(ActionServer):
     '''Sends back the data that has been received, after each return line'''
     def __init__(self):
@@ -513,7 +537,7 @@ class EchoByteByByteActionServer(ActionServer):
         self.session = session
         self.t = t = threading.Thread(target=self.loop, name="echo2-server")
         t.start()
-    
+
     def loop(self):
         print("Echo server started, session", self.session.sid)
         toreturn = bytearray()
@@ -529,7 +553,7 @@ class EchoByteByByteActionServer(ActionServer):
                     toreturn.clear()
             else:
                 break
-        
+
 
 
 
@@ -543,23 +567,23 @@ class CommunicationChannel:
     METADATA = 'sid orig session nreq nmail last'.split()
     LAST_LAST = 'last'
     LAST_NOTLAST = '-'
-    
+
     SESSION_NEW = '-'
-    
+
     # flag to indicate whether all methods are implemented
     USABLE = False
-    
+
     def issymmetric(self):
         """Indicates if this CommunicationChannel is symmetric. It means that after a senddata,
         the sent data can be retrieve by the same object using checkfordata.
         It will be False for Imap/SmtpConnection"""
         return True
-    
+
     def senddata(self, data, **kwargs):
         """Send the data to the provided arguments
         @return: if symmetric, return the uid of the message"""
         raise NotImplementedError
-    
+
     def checkkwargs(self, kwargs, globalcheck=None, **kwargsexpected):
         """Checks a kwargs for expected values.
         Called in checkfordata (for new found data or cache)
@@ -577,13 +601,13 @@ class CommunicationChannel:
         if callable(globalcheck) and not globalcheck(kwargs):
             return False
         return True
-    
+
     def checkfordata(self, globalcheck=None, **kwargsexpected):
         """Wait for data that corresponds to the provided checks.
         May store the uids => kwargs in a cache (must be emptied in deletedata)
         @return: the list of corresponding uids (may be empty)"""
         raise NotImplementedError
-    
+
     def retrievedata(self, uid, deleteafteruse=True):
         """Retrieve some data.
         @param uid: the uid as returned by checkfordata
@@ -604,18 +628,18 @@ class FolderCommunicationChannel(CommunicationChannel):
     FILENAME_RX = re.compile(re.sub(r"{(\w+)\}", r"(?P<\1>[a-zA-Z0-9*_.-]+)", FILENAME).replace(' ', r'\s+').replace(',', r',\s*')+"$")
     #GROUP_PATTERN = ",{group[1]}={value},"
     TEMPPATTERN = ".{}.temp"
-    
+
     def __init__(self, hostname=None, credmanager=None, login=None, password=None):
         folder = self.folder = hostname
         if not os.path.isdir(folder):
             raise argparse.ArgumentError('The hostname must be an existing folder')
-    
+
     def issymmetric(self):
         """Indicates if this CommunicationChannel is symmetric. It means that after a senddata,
         the sent data can be retrieve by the same object using checkfordata.
         It will be False for Imap/SmtpConnection"""
         return True
-    
+
     def senddata(self, data, **kwargs):
         """Send the data to the provided arguments
         @return: if symmetric, return the uid of the message"""
@@ -641,7 +665,7 @@ class FolderCommunicationChannel(CommunicationChannel):
                 foundfiles.append(fil)
         LOGGER.debug("%s file(s) match", len(foundfiles))
         return foundfiles
-    
+
     def retrievedata(self, uid, deleteafteruse=True):
         """Retrieve some data.
         @param uid: the uid as returned by checkfordata
