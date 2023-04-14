@@ -27,8 +27,12 @@ Client ⇆ Session ⇆ Physical mean ⇆ Session ⇆ Server
 * ✅ Console / ✅Shell (Bash or other program) communicating with stdin/stdout/stderr  ([`GenericPipeActionServer PipeActionServer PipeLineClient`](src/remoteconanywhere/pipe.py))
 * ✅ Socket / Connection to other socket (ssh, rdesktop, vnc)
 * ✅ Socket / Connection to local socket
-* 💡 Http proxy
+* ✅ Http proxy ([`TcpSocketActionServer runLocalServerForRemoteClient`](src/remoteconanywhere/socket.py)) and ([`serverOwnProxyOnFolder.py`](examples/serverOwnProxyOnFolder.py))
 * ✅ SOCKS proxy v4 and v4a! ([`Socks4Backend SocksFrontEnd`](src/remoteconanywhere/socks.py))
+
+### Transverse
+* ✅ : Method to clean shared space
+
 
 💡 : ideas 
 
@@ -42,7 +46,6 @@ See [src/remoteconanywhere/cred.py](src/remoteconanywhere/cred.py)
 * ✅ local file  
 
 ### What to do next?
-* 💡 : Method to clean shared space
 * 💡 : commands to all/one servers:
   * redistribute capabilities (if cleaned by a client)
   * stop
